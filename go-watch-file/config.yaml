@@ -90,7 +90,13 @@ alert_enabled: false
 alert_suppress_enabled: true
 # 告警规则文件路径（兼容字段，当前不再使用）
 alert_rules_file: ""
-# 需要监控的日志路径 逗号或分号分隔
+# 需要监控的告警输入源，逗号或分号分隔
+# 兼容两类写法：
+# 1) 文件路径：/var/log/app/error.log
+# 2) Docker 容器日志：docker://container/<容器名或ID前缀>
+#    或 docker://service/<服务名>?project=<compose项目>
+#    或 docker://compose/<项目>/<服务>
+# Docker 日志会镜像到 logs/alert-sources/docker/，便于继续做 AI 分析与检索
 alert_log_paths: ""
 # 告警轮询间隔 支持 2s 2秒 2
 alert_poll_interval: "2s"

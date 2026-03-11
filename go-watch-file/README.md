@@ -100,11 +100,11 @@
 - `alert_enabled`：是否启用告警决策（true/false）。
 - `alert_suppress_enabled`：是否开启告警抑制（默认 true）。
 - `alert_rules_file`：告警规则文件路径（YAML/JSON）。
-- `alert_log_paths`：日志文件路径列表（逗号/分号/空白分隔）。
+- `alert_log_paths`：告警输入源列表（逗号/分号/空白分隔），既支持日志文件路径，也支持 `docker://...` 容器日志源。
 - `alert_poll_interval`：轮询间隔（默认 2s，支持 2s/2秒/2）。
-- `alert_start_from_end`：是否从文件末尾开始追踪（默认 true）。
-  - `true` 仅处理新写入日志，忽略历史内容。
-  - `false` 启动时从头扫描，可能产生历史告警。
+- `alert_start_from_end`：是否从末尾开始追踪（默认 true）。
+  - 文件源：`true` 仅处理新写入日志，`false` 启动时从头扫描。
+  - Docker 源：`true` 从当前时刻开始跟随新日志，`false` 会回放容器现有历史日志。
 - `ai_enabled`：是否启用 AI 日志分析（true/false）。仅在开启时，上传成功通知与告警通知才显示 AI 摘要字段（告警通知会展示“内容=AI研判、原文=命中日志”）。
 - `ai_base_url` / `ai_api_key` / `ai_model`：AI 请求地址、密钥与模型。
 - `ai_timeout`：AI 请求超时（支持 `20s` / `1m` 等）。
@@ -178,6 +178,16 @@ ai_max_lines: 200
 ### 环境变量模板（.env.example）
 `.env.example` 已提供模板，可按需补充 `OSS_BUCKET/OSS_ENDPOINT/OSS_REGION/OSS_FORCE_PATH_STYLE/OSS_DISABLE_SSL` 与 AI 相关变量。
 
+### Docker Compose 场景建议
+- 若你习惯以 `docker compose` 方式部署业务系统，优先把 `alert_log_paths` 配成 Docker 源，而不是强行寻找宿主机日志目录。
+- 支持写法：
+  - `docker://container/gwf-backend`
+  - `docker://service/api?project=myapp`
+  - `docker://compose/myapp/api`
+- 后端会通过 Docker Engine API 跟随日志，并把内容镜像到 `logs/alert-sources/docker/`。
+- 如需把容器日志也纳入“文件入云”主线，可把 `watch_dir` 追加为 `logs/alert-sources`（支持多目录）。
+- 若 Docker 不是默认 Unix Socket，可通过环境变量 `DOCKER_HOST` 覆盖连接地址。
+
 ### 告警规则文件示例
 - 双层模板（默认规则 + 场景规则）：`deploy/alert/gwf-alert-rules-layered-template.json`
 - 组合脚本（生成运行时规则并可选发布）：`scripts/ops/alert-rules-compose.ps1`
@@ -213,7 +223,7 @@ ai_max_lines: 200
 - `POST /api/ai/log-summary`
 - Body：`{ "path": "/path/to/file", "mode": "tail", "query": "", "limit": 200, "caseSensitive": false }`
 - 说明：需 `ai_enabled=true` 且 AI_* 配置齐全；`mode=search` 必须带 `query`；`limit` 不传时使用 `ai_max_lines`。
-- 路径范围：`path` 支持 `watch_dir` 下的文件，也支持 `alert_log_paths` 中声明的日志路径（便于直接分析后端报错日志）。
+- 路径范围：`path` 支持 `watch_dir` 下的文件，也支持 `alert_log_paths` 中声明的日志路径；当配置 Docker 源时，也支持分析 `logs/alert-sources/docker/` 下的镜像日志。
 - AI 超时或异常时会自动压缩输入并重试；若仍失败则降级返回规则摘要（`meta.degraded=true`）。
 
 ### 6) 运行时配置更新

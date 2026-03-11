@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"file-watch/internal/alert"
 	"file-watch/internal/logger"
 	"file-watch/internal/metrics"
 	"file-watch/internal/models"
@@ -300,7 +301,12 @@ func isPathAllowedByAlertLogPaths(rawAlertLogPaths, targetPath string) bool {
 	if len(alertPaths) == 0 {
 		return false
 	}
+	hasDockerSource := false
 	for _, path := range alertPaths {
+		if strings.HasPrefix(strings.ToLower(path), "docker://") {
+			hasDockerSource = true
+			continue
+		}
 		candidate := filepath.Clean(filepath.FromSlash(path))
 		if candidate == "" || candidate == "." {
 			continue
@@ -316,7 +322,19 @@ func isPathAllowedByAlertLogPaths(rawAlertLogPaths, targetPath string) bool {
 			return true
 		}
 	}
+	if hasDockerSource && isPathInsideAlertMirrorRoot(targetPath) {
+		return true
+	}
 	return false
+}
+
+func isPathInsideAlertMirrorRoot(targetPath string) bool {
+	root := filepath.Clean(alert.AlertSourceMirrorRoot())
+	if root == "" || root == "." {
+		return false
+	}
+	_, relErr := pathutil.RelativePath(root, targetPath)
+	return relErr == nil
 }
 
 // splitLogPaths 用于解析日志路径列表（逗号/分号/空白/中文分隔符）
@@ -331,7 +349,10 @@ func splitLogPaths(raw string) []string {
 		if trimmed == "" {
 			continue
 		}
-		normalized := filepath.Clean(filepath.FromSlash(trimmed))
+		normalized := trimmed
+		if !strings.HasPrefix(strings.ToLower(trimmed), "docker://") {
+			normalized = filepath.Clean(filepath.FromSlash(trimmed))
+		}
 		if normalized == "" || normalized == "." {
 			continue
 		}

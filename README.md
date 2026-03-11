@@ -62,6 +62,9 @@ docker compose up --build -d
 
 - 前端：`http://localhost:8081`
 - 后端：`http://localhost:8082`
+- 默认已挂载 `/var/run/docker.sock` 到 `gwf-backend`，可直接监控宿主机上的 Docker 容器日志。
+- 告警输入可继续使用文件路径，也可直接填写 `docker://service/<服务名>?project=<compose项目>`、`docker://container/<容器名或ID前缀>`。
+- 容器日志会镜像到后端容器内的 `logs/alert-sources/docker/`，因此可以继续复用 AI 分析、检索与知识库链路。
 
 ## 4. 文档入口
 

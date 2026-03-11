@@ -9,6 +9,7 @@ services:
     volumes:
       - /opt/gwf:/etc/gwf
       - /opt/gwf/logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "${GWF_BACKEND_PORT:-8082}:8080"
     restart: unless-stopped

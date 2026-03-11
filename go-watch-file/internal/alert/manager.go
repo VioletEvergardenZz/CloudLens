@@ -8,7 +8,6 @@ package alert
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -67,10 +66,12 @@ func (n *NotifierSet) Notify(ctx context.Context, payload NotifyPayload) error {
 // Manager 管理告警规则加载与日志轮询
 type Manager struct {
 	mu              sync.Mutex
+	pollMu          sync.Mutex
 	cfg             *models.Config
 	state           *State
 	engine          *Engine
 	tailer          *Tailer
+	dockerTailer    *DockerTailer
 	notifier        Notifier
 	ruleset         *Ruleset
 	logPaths        []string
@@ -87,6 +88,9 @@ type Manager struct {
 	aiHistory       map[string]time.Time
 	lineBuffers     map[string]*lineBuffer
 	aiMu            sync.Mutex
+	filePollErr     error
+	dockerPollErr   error
+	lastPollAt      time.Time
 }
 
 // ConfigUpdate 表示告警配置的运行时更新
@@ -107,9 +111,16 @@ func NewManager(cfg *models.Config, notifier Notifier) (*Manager, error) {
 	if !enabled {
 		return nil, nil
 	}
-	logPaths := parseLogPaths(cfg.AlertLogPaths)
+	logPaths, err := normalizeLogSources(cfg.AlertLogPaths)
+	if err != nil {
+		return nil, err
+	}
 	if len(logPaths) == 0 {
 		return nil, fmt.Errorf("告警日志路径不能为空")
+	}
+	filePaths, dockerSources, err := splitAlertLogSources(logPaths)
+	if err != nil {
+		return nil, err
 	}
 	ruleset := cfg.AlertRules
 	if ruleset == nil {
@@ -157,8 +168,16 @@ func NewManager(cfg *models.Config, notifier Notifier) (*Manager, error) {
 		manager.engine.SetSuppressionEnabled(suppressEnabled)
 	}
 	manager.updateRulesSummary(ruleset, "")
-	manager.updatePollSummary(time.Time{}, nil)
-	manager.tailer = NewTailer(logPaths, pollInterval, startFromEnd, manager.handleLine, manager.handlePoll)
+	manager.updatePollSummary(time.Time{})
+	if len(filePaths) > 0 {
+		manager.tailer = NewTailer(filePaths, pollInterval, startFromEnd, manager.handleLine, manager.handleFilePoll)
+	}
+	if len(dockerSources) > 0 {
+		manager.dockerTailer, err = NewDockerTailer(dockerSources, pollInterval, startFromEnd, manager.handleLine, manager.handleDockerPoll)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return manager, nil
 }
 
@@ -214,7 +233,14 @@ func (m *Manager) UpdateConfig(update ConfigUpdate, shouldRun bool) error {
 		return fmt.Errorf("告警轮询间隔无效: %w", err)
 	}
 
-	parsedLogPaths := parseLogPaths(logPathsRaw)
+	parsedLogPaths, err := normalizeLogSources(logPathsRaw)
+	if err != nil {
+		return err
+	}
+	filePaths, dockerSources, err := splitAlertLogSources(parsedLogPaths)
+	if err != nil {
+		return err
+	}
 	if update.Enabled {
 		if m.ruleset == nil {
 			return fmt.Errorf("告警规则不能为空")
@@ -246,7 +272,12 @@ func (m *Manager) UpdateConfig(update ConfigUpdate, shouldRun bool) error {
 
 	if logPathsChanged || pollChanged || startChanged || enabledChanged {
 		// 影响轮询参数时刷新轮询摘要
-		m.updatePollSummary(time.Time{}, nil)
+		m.pollMu.Lock()
+		m.filePollErr = nil
+		m.dockerPollErr = nil
+		m.lastPollAt = time.Time{}
+		m.updatePollSummary(time.Time{})
+		m.pollMu.Unlock()
 	}
 
 	if !update.Enabled {
@@ -254,14 +285,27 @@ func (m *Manager) UpdateConfig(update ConfigUpdate, shouldRun bool) error {
 			m.stopLocked()
 		}
 		m.tailer = nil
+		m.dockerTailer = nil
 		return nil
 	}
 
-	if m.tailer == nil || logPathsChanged || pollChanged || startChanged {
+	if logPathsChanged || pollChanged || startChanged {
 		if m.running {
 			m.stopLocked()
 		}
-		m.tailer = NewTailer(parsedLogPaths, pollInterval, update.StartFromEnd, m.handleLine, m.handlePoll)
+		if len(filePaths) > 0 {
+			m.tailer = NewTailer(filePaths, pollInterval, update.StartFromEnd, m.handleLine, m.handleFilePoll)
+		} else {
+			m.tailer = nil
+		}
+		if len(dockerSources) > 0 {
+			m.dockerTailer, err = NewDockerTailer(dockerSources, pollInterval, update.StartFromEnd, m.handleLine, m.handleDockerPoll)
+			if err != nil {
+				return err
+			}
+		} else {
+			m.dockerTailer = nil
+		}
 	}
 
 	if shouldRun && !m.running {
@@ -306,15 +350,20 @@ func (m *Manager) UpdateRules(ruleset *Ruleset) error {
 
 // startLocked 用于启动流程或服务
 func (m *Manager) startLocked() {
-	if m.tailer == nil || m.running || !m.enabled {
+	if (m.tailer == nil && m.dockerTailer == nil) || m.running || !m.enabled {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.ctx = ctx
 	m.cancel = cancel
 	m.running = true
-	go m.tailer.Run(ctx)
-	logger.Info("告警轮询已启动: logs=%d interval=%s", len(m.logPaths), formatDuration(m.pollInterval))
+	if m.tailer != nil {
+		go m.tailer.Run(ctx)
+	}
+	if m.dockerTailer != nil {
+		go m.dockerTailer.Run(ctx)
+	}
+	logger.Info("告警采集已启动: sources=%d interval=%s", len(m.logPaths), formatDuration(m.pollInterval))
 }
 
 // stopLocked 用于停止流程并释放资源
@@ -369,28 +418,52 @@ func (m *Manager) sendNotification(result decisionResult, line string, contextLi
 	}
 }
 
-// handlePoll 用于处理核心流程
-func (m *Manager) handlePoll(at time.Time, pollErr error) {
+// handleFilePoll 用于处理文件源轮询结果
+func (m *Manager) handleFilePoll(at time.Time, pollErr error) {
 	if m == nil || m.state == nil {
 		return
 	}
-	m.updatePollSummary(at, pollErr)
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	m.filePollErr = pollErr
+	m.updatePollSummary(at)
+}
+
+// handleDockerPoll 用于处理 Docker 源刷新结果。
+func (m *Manager) handleDockerPoll(at time.Time, pollErr error) {
+	if m == nil || m.state == nil {
+		return
+	}
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	m.dockerPollErr = pollErr
+	m.updatePollSummary(at)
 }
 
 // updatePollSummary 用于更新运行状态或配置
-func (m *Manager) updatePollSummary(at time.Time, pollErr error) {
+func (m *Manager) updatePollSummary(at time.Time) {
+	if at.After(m.lastPollAt) {
+		m.lastPollAt = at
+	}
 	summary := PollSummary{
 		Interval: formatDuration(m.pollInterval),
 		LogFiles: append([]string(nil), m.logPaths...),
-		LastPoll: formatTime(at),
-		NextPoll: formatTime(at.Add(m.pollInterval)),
+		LastPoll: formatTime(m.lastPollAt),
+		NextPoll: formatTime(m.lastPollAt.Add(m.pollInterval)),
 	}
-	if at.IsZero() {
+	if m.lastPollAt.IsZero() {
 		summary.LastPoll = "--"
 		summary.NextPoll = "--"
 	}
-	if pollErr != nil {
-		summary.Error = pollErr.Error()
+	errs := make([]string, 0, 2)
+	if m.filePollErr != nil {
+		errs = append(errs, "文件源: "+m.filePollErr.Error())
+	}
+	if m.dockerPollErr != nil {
+		errs = append(errs, "Docker 源: "+m.dockerPollErr.Error())
+	}
+	if len(errs) > 0 {
+		summary.Error = strings.Join(errs, " | ")
 	}
 	m.state.UpdatePollSummary(summary)
 }
@@ -449,28 +522,6 @@ func buildEscalationSummary(raw EscalationRule) string {
 		level = string(LevelFatal)
 	}
 	return fmt.Sprintf("阈值%d次 / %s -> %s", raw.Threshold, window, strings.ToLower(level))
-}
-
-// parseLogPaths 用于解析输入参数或配置
-func parseLogPaths(raw string) []string {
-	parts := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' ' || r == '，' || r == '；'
-	})
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		cleaned := filepath.Clean(trimmed)
-		if _, ok := seen[cleaned]; ok {
-			continue
-		}
-		seen[cleaned] = struct{}{}
-		out = append(out, cleaned)
-	}
-	return out
 }
 
 // sameStringSlice 用于判断两个集合是否等价

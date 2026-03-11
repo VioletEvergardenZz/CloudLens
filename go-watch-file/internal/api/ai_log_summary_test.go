@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"file-watch/internal/alert"
 	"file-watch/internal/models"
 )
 
@@ -96,6 +97,40 @@ func TestValidateLogPath_RejectsDirectory(t *testing.T) {
 	}
 	if _, err := validateLogPath(cfg, watchDir); err == nil {
 		t.Fatal("validateLogPath should reject directory path")
+	}
+}
+
+func TestValidateLogPath_AllowsDockerMirrorPath(t *testing.T) {
+	rootDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(rootDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	mirrorDir := filepath.Join(alert.AlertSourceMirrorRoot(), "docker")
+	if err := os.MkdirAll(mirrorDir, 0o755); err != nil {
+		t.Fatalf("mkdir mirror dir failed: %v", err)
+	}
+	mirrorFile := filepath.Join(mirrorDir, "demo.log")
+	if err := os.WriteFile(mirrorFile, []byte("2026-03-10T10:00:00Z ERROR demo\n"), 0o644); err != nil {
+		t.Fatalf("write docker mirror log failed: %v", err)
+	}
+
+	cfg := &models.Config{
+		AlertLogPaths: "docker://service/api?project=demo",
+	}
+	got, err := validateLogPath(cfg, mirrorFile)
+	if err != nil {
+		t.Fatalf("validateLogPath should allow docker mirror path: %v", err)
+	}
+	if got != mirrorFile {
+		t.Fatalf("unexpected validated path: got=%s want=%s", got, mirrorFile)
 	}
 }
 
