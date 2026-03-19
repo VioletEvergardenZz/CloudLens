@@ -37,6 +37,9 @@ type Article struct {
 	CurrentVersion int              `json:"currentVersion"`
 	Content        string           `json:"content,omitempty"`
 	ChangeNote     string           `json:"changeNote,omitempty"`
+	MatchSnippet   string           `json:"matchSnippet,omitempty"`
+	MatchHeading   string           `json:"matchHeading,omitempty"`
+	MatchScore     int              `json:"matchScore,omitempty"`
 	Tags           []string         `json:"tags,omitempty"`
 	References     []ArticleRef     `json:"references,omitempty"`
 	Versions       []ArticleVersion `json:"versions,omitempty"`
@@ -115,9 +118,12 @@ type AskResult struct {
 }
 
 type Citation struct {
-	ArticleID string `json:"articleId"`
-	Title     string `json:"title"`
-	Version   int    `json:"version"`
+	ArticleID  string `json:"articleId"`
+	Title      string `json:"title"`
+	Version    int    `json:"version"`
+	Heading    string `json:"heading,omitempty"`
+	Snippet    string `json:"snippet,omitempty"`
+	ChunkIndex int    `json:"chunkIndex,omitempty"`
 }
 
 type ImportResult struct {
@@ -125,4 +131,16 @@ type ImportResult struct {
 	Updated  int      `json:"updated"`
 	Skipped  int      `json:"skipped"`
 	Files    []string `json:"files,omitempty"`
+}
+
+type RetrievedChunk struct {
+	ArticleID  string `json:"articleId"`
+	Title      string `json:"title"`
+	Version    int    `json:"version"`
+	Severity   string `json:"severity,omitempty"`
+	Heading    string `json:"heading,omitempty"`
+	Snippet    string `json:"snippet,omitempty"`
+	Content    string `json:"content,omitempty"`
+	ChunkIndex int    `json:"chunkIndex,omitempty"`
+	Score      int    `json:"score,omitempty"`
 }

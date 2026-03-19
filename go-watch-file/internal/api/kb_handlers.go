@@ -504,7 +504,7 @@ type kbAskMeta struct {
 
 // askKnowledge 统一封装“检索问答 + 可选 AI 增强”的双阶段流程
 // 任何阶段失败都要保留可用的检索结果 保障问答能力可降级
-func (h *handler) askKnowledge(question string, limit int) (kb.AskResult, kbAskMeta, error) {
+func (h *handler) legacyAskKnowledge(question string, limit int) (kb.AskResult, kbAskMeta, error) {
 	trimmedQuestion := strings.TrimSpace(question)
 	if trimmedQuestion == "" {
 		return kb.AskResult{}, kbAskMeta{}, fmt.Errorf("question is required")
@@ -560,10 +560,95 @@ func (h *handler) askKnowledge(question string, limit int) (kb.AskResult, kbAskM
 	answer, confidence, err := h.callAIForKnowledgeAnswer(ragPayload{
 		Question:  trimmedQuestion,
 		Citations: citations,
-		Articles:  items,
+		Chunks:    []kb.RetrievedChunk{},
 	})
 	if err != nil {
 		// AI 调用失败时降级回本地回答，但仍返回引用
+		fallback.Confidence = 0.65
+		return fallback, kbAskMeta{
+			Degraded:       true,
+			ErrorClass:     classifyKnowledgeAIError(err),
+			FallbackReason: "ai_request_failed",
+		}, nil
+	}
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		fallback.Confidence = 0.65
+		return fallback, kbAskMeta{
+			Degraded:       true,
+			ErrorClass:     "empty_answer",
+			FallbackReason: "ai_response_empty",
+		}, nil
+	}
+	return kb.AskResult{
+		Answer:     answer,
+		Citations:  citations,
+		Confidence: confidence,
+	}, kbAskMeta{}, nil
+}
+
+func (h *handler) askKnowledge(question string, limit int) (kb.AskResult, kbAskMeta, error) {
+	trimmedQuestion := strings.TrimSpace(question)
+	if trimmedQuestion == "" {
+		return kb.AskResult{}, kbAskMeta{}, fmt.Errorf("question is required")
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	if h == nil || h.kb == nil {
+		return kb.AskResult{}, kbAskMeta{}, fmt.Errorf("knowledge service not ready")
+	}
+	chunks := make([]kb.RetrievedChunk, 0, limit)
+	for _, candidate := range buildQuestionCandidates(trimmedQuestion) {
+		found, err := h.kb.Retrieve(candidate, limit, false)
+		if err != nil {
+			return kb.AskResult{}, kbAskMeta{}, err
+		}
+		if len(found) == 0 {
+			continue
+		}
+		chunks = found
+		break
+	}
+	if len(chunks) == 0 {
+		return kb.AskResult{}, kbAskMeta{}, fmt.Errorf("知识库中未找到可引用条目")
+	}
+
+	citations := make([]kb.Citation, 0, len(chunks))
+	for _, item := range chunks {
+		citations = append(citations, kb.Citation{
+			ArticleID:  item.ArticleID,
+			Title:      item.Title,
+			Version:    item.Version,
+			Heading:    item.Heading,
+			Snippet:    item.Snippet,
+			ChunkIndex: item.ChunkIndex,
+		})
+	}
+
+	fallback, _ := h.kb.Ask(trimmedQuestion, limit)
+	if len(fallback.Citations) == 0 {
+		fallback.Citations = citations
+	}
+	if strings.TrimSpace(fallback.Answer) == "" {
+		fallback.Answer = fmt.Sprintf("可先参考《%s》并根据引用片段继续排查。", chunks[0].Title)
+	}
+
+	if !h.isKnowledgeAIReady() {
+		fallback.Confidence = 0.72
+		return fallback, kbAskMeta{
+			Degraded:       true,
+			ErrorClass:     "ai_disabled",
+			FallbackReason: "ai_disabled_or_unconfigured",
+		}, nil
+	}
+
+	answer, confidence, err := h.callAIForKnowledgeAnswer(ragPayload{
+		Question:  trimmedQuestion,
+		Citations: citations,
+		Chunks:    chunks,
+	})
+	if err != nil {
 		fallback.Confidence = 0.65
 		return fallback, kbAskMeta{
 			Degraded:       true,
@@ -609,10 +694,16 @@ func classifyKnowledgeAIError(err error) string {
 	}
 }
 
-type ragPayload struct {
+type legacyRAGPayload struct {
 	Question  string
 	Citations []kb.Citation
 	Articles  []kb.Article
+}
+
+type ragPayload struct {
+	Question  string
+	Citations []kb.Citation
+	Chunks    []kb.RetrievedChunk
 }
 
 func (h *handler) isKnowledgeAIReady() bool {
@@ -712,7 +803,7 @@ func (h *handler) resolveKBConfig() *models.Config {
 	return h.cfg
 }
 
-func buildKnowledgeRAGContent(payload ragPayload) string {
+func legacyBuildKnowledgeRAGContent(payload legacyRAGPayload) string {
 	builder := strings.Builder{}
 	builder.WriteString("问题:\n")
 	builder.WriteString(payload.Question)
@@ -746,6 +837,36 @@ func buildKnowledgeRAGContent(payload ragPayload) string {
 
 // parseKnowledgeAIResponse 对模型输出做强约束解析
 // 解析失败直接上抛 由上层触发降级路径 保证返回字段稳定
+func buildKnowledgeRAGContent(payload ragPayload) string {
+	builder := strings.Builder{}
+	builder.WriteString("问题:\n")
+	builder.WriteString(payload.Question)
+	builder.WriteString("\n\n候选知识片段:\n")
+	for idx, chunk := range payload.Chunks {
+		builder.WriteString(fmt.Sprintf("[%d] %s (id=%s, version=%d, severity=%s, chunk=%d)\n",
+			idx+1, chunk.Title, chunk.ArticleID, chunk.Version, chunk.Severity, chunk.ChunkIndex))
+		if heading := strings.TrimSpace(chunk.Heading); heading != "" {
+			builder.WriteString("章节: ")
+			builder.WriteString(heading)
+			builder.WriteString("\n")
+		}
+		if snippet := strings.TrimSpace(chunk.Snippet); snippet != "" {
+			builder.WriteString("命中摘要: ")
+			builder.WriteString(snippet)
+			builder.WriteString("\n")
+		}
+		if content := strings.TrimSpace(chunk.Content); content != "" {
+			builder.WriteString("正文片段: ")
+			builder.WriteString(trimRunes(content, 800))
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\n")
+	}
+	builder.WriteString("请只基于以上知识片段回答，并给出可执行建议。\n")
+	builder.WriteString("注意：最终引用列表由系统追加，你只输出 answer/confidence。")
+	return builder.String()
+}
+
 func parseKnowledgeAIResponse(raw string) (string, float64, error) {
 	clean := strings.TrimSpace(raw)
 	if clean == "" {

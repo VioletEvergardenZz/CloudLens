@@ -209,6 +209,12 @@ func TestKBHandlers_AskRecommendationsAndPendingReviews(t *testing.T) {
 	if !asked.OK || asked.Answer == "" || len(asked.Citations) == 0 {
 		t.Fatalf("unexpected ask response: %+v", asked)
 	}
+	if asked.Citations[0].Snippet == "" {
+		t.Fatalf("expected ask citation include snippet: %+v", asked.Citations[0])
+	}
+	if asked.Citations[0].ChunkIndex <= 0 {
+		t.Fatalf("expected ask citation include chunk index: %+v", asked.Citations[0])
+	}
 	if !asked.Meta.Degraded {
 		t.Fatalf("ask meta expected degraded=true when AI is disabled: %+v", asked.Meta)
 	}

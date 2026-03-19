@@ -60,6 +60,9 @@ func TestSearchFallbackTokenScoring(t *testing.T) {
 	if items[0].ID != target.ID {
 		t.Fatalf("expected first result %s, got %s", target.ID, items[0].ID)
 	}
+	if items[0].MatchSnippet == "" {
+		t.Fatalf("expected search result carry match snippet")
+	}
 }
 
 func TestAskReturnsCitationWithLongQuestion(t *testing.T) {
@@ -84,6 +87,12 @@ func TestAskReturnsCitationWithLongQuestion(t *testing.T) {
 	}
 	if len(result.Citations) == 0 {
 		t.Fatalf("expected ask to return citations")
+	}
+	if result.Citations[0].Snippet == "" {
+		t.Fatalf("expected ask citation include snippet")
+	}
+	if result.Citations[0].ChunkIndex <= 0 {
+		t.Fatalf("expected ask citation include chunk index")
 	}
 }
 

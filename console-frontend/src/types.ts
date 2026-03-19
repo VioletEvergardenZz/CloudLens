@@ -345,6 +345,9 @@ export type KnowledgeArticle = {
   currentVersion: number;
   content?: string;
   changeNote?: string;
+  matchSnippet?: string;
+  matchHeading?: string;
+  matchScore?: number;
   tags?: string[];
   createdBy: string;
   updatedBy: string;
@@ -398,6 +401,9 @@ export type KnowledgeAskResponse = {
     articleId: string;
     title: string;
     version: number;
+    heading?: string;
+    snippet?: string;
+    chunkIndex?: number;
   }>;
   meta?: {
     degraded: boolean;

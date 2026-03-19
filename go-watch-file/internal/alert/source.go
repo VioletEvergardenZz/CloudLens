@@ -117,7 +117,7 @@ func normalizeLogSourceToken(raw string) (string, error) {
 		return "", nil
 	}
 	if !isDockerSourceToken(trimmed) {
-		cleaned := filepath.Clean(filepath.FromSlash(trimmed))
+		cleaned := filepath.ToSlash(filepath.Clean(filepath.FromSlash(trimmed)))
 		if cleaned == "" || cleaned == "." {
 			return "", nil
 		}

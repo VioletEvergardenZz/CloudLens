@@ -8,6 +8,7 @@ package kb
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -25,16 +26,36 @@ import (
 )
 
 const (
-	defaultDataDir    = "data/kb"
-	defaultPageSize   = 20
-	maxPageSize       = 100
-	defaultReviewDays = 90
+	defaultDataDir      = "data/kb"
+	defaultPageSize     = 20
+	maxPageSize         = 100
+	defaultReviewDays   = 90
+	defaultChunkSize    = 420
+	defaultChunkOverlap = 80
 )
 
 type Service struct {
-	db         *sql.DB
-	dbPath     string
-	reviewDays int
+	db           *sql.DB
+	dbPath       string
+	reviewDays   int
+	chunkSize    int
+	chunkOverlap int
+}
+
+type chunkSearchHit struct {
+	article    Article
+	heading    string
+	chunkIndex int
+	content    string
+	snippet    string
+	score      int
+}
+
+type articleChunk struct {
+	index   int
+	heading string
+	content string
+	hash    string
 }
 
 // NewService 统一负责知识库存储初始化
@@ -61,11 +82,18 @@ func NewService(dataDir string) (*Service, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Service{
-		db:         db,
-		dbPath:     dbPath,
-		reviewDays: resolveReviewDays(),
-	}, nil
+	service := &Service{
+		db:           db,
+		dbPath:       dbPath,
+		reviewDays:   resolveReviewDays(),
+		chunkSize:    resolveChunkSize(),
+		chunkOverlap: resolveChunkOverlap(),
+	}
+	if err := service.syncCurrentVersionChunks(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return service, nil
 }
 
 func (s *Service) Close() error {
@@ -137,6 +165,9 @@ func (s *Service) CreateArticle(input CreateArticleInput) (*Article, error) {
 	`, id, 1, content, changeNote, sourceType, sourceRef, createdBy, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("create kb article version failed: %w", err)
+	}
+	if err := s.rebuildChunksTx(tx, id, 1, content, createdAt); err != nil {
+		return nil, err
 	}
 
 	if err := replaceTagsTx(tx, id, input.Tags); err != nil {
@@ -223,6 +254,9 @@ func (s *Service) UpdateArticle(id string, input UpdateArticleInput) (*Article, 
 	`, articleID, nextVersion, content, changeNote, sourceType, sourceRef, updatedBy, updatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("insert kb version failed: %w", err)
+	}
+	if err := s.rebuildChunksTx(tx, articleID, nextVersion, content, updatedAt); err != nil {
+		return nil, err
 	}
 
 	if len(input.Tags) > 0 {
@@ -527,6 +561,9 @@ func (s *Service) RollbackArticle(id string, targetVersion int, operator, commen
 	`, articleID, nextVersion, rollbackContent, comment, "rollback", fmt.Sprintf("version:%d", targetVersion), operator, updatedAt); err != nil {
 		return nil, err
 	}
+	if err := s.rebuildChunksTx(tx, articleID, nextVersion, rollbackContent, updatedAt); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(`
 		UPDATE kb_articles
 		SET current_version = ?, updated_by = ?, updated_at = ?
@@ -545,7 +582,7 @@ func (s *Service) RollbackArticle(id string, targetVersion int, operator, commen
 
 // Search 先走数据库层条件查询 再在结果不足时补充分词兜底
 // 这个设计用于提升真实文本噪声场景下的召回稳定性
-func (s *Service) Search(query string, limit int, includeArchived bool) ([]Article, error) {
+func (s *Service) legacySearch(query string, limit int, includeArchived bool) ([]Article, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
 		return []Article{}, nil
@@ -578,7 +615,7 @@ func (s *Service) Search(query string, limit int, includeArchived bool) ([]Artic
 
 // Ask 在检索结果基础上组装引用上下文
 // 即使 AI 未参与生成也会返回可追踪的引用条目 保障答案可验证
-func (s *Service) Ask(question string, limit int) (AskResult, error) {
+func (s *Service) legacyAsk(question string, limit int) (AskResult, error) {
 	trimmed := strings.TrimSpace(question)
 	if trimmed == "" {
 		return AskResult{}, fmt.Errorf("%w: question is required", ErrInvalidInput)
@@ -621,8 +658,8 @@ func (s *Service) Ask(question string, limit int) (AskResult, error) {
 	}, nil
 }
 
-func (s *Service) Recommendations(query string, limit int) ([]Article, error) {
-	return s.Search(query, limit, false)
+func (s *Service) legacyRecommendations(query string, limit int) ([]Article, error) {
+	return s.legacySearch(query, limit, false)
 }
 
 // searchByTokens 是 Search 的召回兜底
@@ -683,6 +720,316 @@ func (s *Service) searchByTokens(query string, limit int, includeArchived bool) 
 		out = append(out, item.article)
 	}
 	return out, nil
+}
+
+// Search 先做片段级召回，再把最佳片段折叠回文章结果。
+// 这样既能兼容现有文章列表接口，又能让检索真正走 RAG 的 chunk 底座。
+func (s *Service) Search(query string, limit int, includeArchived bool) ([]Article, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return []Article{}, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	hits, err := s.retrieveChunkHits(q, limit*4, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	if len(hits) == 0 {
+		return s.searchByTokens(q, limit, includeArchived)
+	}
+	out := make([]Article, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for _, hit := range hits {
+		if _, ok := seen[hit.article.ID]; ok {
+			continue
+		}
+		item := hit.article
+		item.Content = hit.content
+		item.MatchSnippet = hit.snippet
+		item.MatchHeading = hit.heading
+		item.MatchScore = hit.score
+		out = append(out, item)
+		seen[item.ID] = struct{}{}
+		if len(out) >= limit {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return s.searchByTokens(q, limit, includeArchived)
+	}
+	tagsByArticle, err := queryTagsByArticleIDs(s.db, collectArticleIDs(out))
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Tags = tagsByArticle[out[i].ID]
+	}
+	return out, nil
+}
+
+// Retrieve 返回问答阶段直接可用的片段命中结果。
+func (s *Service) Retrieve(query string, limit int, includeArchived bool) ([]RetrievedChunk, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return []RetrievedChunk{}, nil
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	hits, err := s.retrieveChunkHits(q, limit, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RetrievedChunk, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, RetrievedChunk{
+			ArticleID:  hit.article.ID,
+			Title:      hit.article.Title,
+			Version:    hit.article.CurrentVersion,
+			Severity:   hit.article.Severity,
+			Heading:    hit.heading,
+			Snippet:    hit.snippet,
+			Content:    hit.content,
+			ChunkIndex: hit.chunkIndex,
+			Score:      hit.score,
+		})
+	}
+	return out, nil
+}
+
+// Ask 基于片段级召回生成本地回答与引用。
+// 即使外部 AI 不可用，也能返回“基于哪一段知识得出的建议”。
+func (s *Service) Ask(question string, limit int) (AskResult, error) {
+	trimmed := strings.TrimSpace(question)
+	if trimmed == "" {
+		return AskResult{}, fmt.Errorf("%w: question is required", ErrInvalidInput)
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	hits, err := s.retrieveChunkHits(trimmed, limit, false)
+	if err != nil {
+		return AskResult{}, err
+	}
+	if len(hits) == 0 {
+		return AskResult{
+			Answer:     "知识库中未检索到相关条目，请补充更具体的关键词。",
+			Citations:  []Citation{},
+			Confidence: 0.2,
+		}, nil
+	}
+	citations := make([]Citation, 0, len(hits))
+	for _, hit := range hits {
+		citations = append(citations, Citation{
+			ArticleID:  hit.article.ID,
+			Title:      hit.article.Title,
+			Version:    hit.article.CurrentVersion,
+			Heading:    hit.heading,
+			Snippet:    hit.snippet,
+			ChunkIndex: hit.chunkIndex,
+		})
+	}
+	confidence := 0.72
+	if len(hits) > 1 {
+		confidence = 0.78
+	}
+	return AskResult{
+		Answer:     buildFallbackChunkAnswer(hits[0]),
+		Citations:  citations,
+		Confidence: confidence,
+	}, nil
+}
+
+func (s *Service) Recommendations(query string, limit int) ([]Article, error) {
+	return s.Search(query, limit, false)
+}
+
+func (s *Service) retrieveChunkHits(query string, limit int, includeArchived bool) ([]chunkSearchHit, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("kb service not ready")
+	}
+	normalized := strings.ToLower(strings.TrimSpace(query))
+	if normalized == "" {
+		return []chunkSearchHit{}, nil
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+	candidates, err := s.loadChunkCandidates(includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	tokens := tokenizeSearchQuery(normalized)
+	scored := make([]chunkSearchHit, 0, len(candidates))
+	for _, item := range candidates {
+		item.score = scoreChunkHit(item, normalized, tokens)
+		if item.score <= 0 {
+			continue
+		}
+		item.snippet = snippetFromContent(item.content, 180)
+		if item.snippet == "" {
+			item.snippet = firstNonEmpty(strings.TrimSpace(item.article.Summary), strings.TrimSpace(item.content))
+		}
+		scored = append(scored, item)
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		if scored[i].article.UpdatedAt != scored[j].article.UpdatedAt {
+			return scored[i].article.UpdatedAt > scored[j].article.UpdatedAt
+		}
+		if scored[i].article.ID != scored[j].article.ID {
+			return scored[i].article.ID < scored[j].article.ID
+		}
+		return scored[i].chunkIndex < scored[j].chunkIndex
+	})
+	if len(scored) == 0 {
+		return []chunkSearchHit{}, nil
+	}
+	if limit > len(scored) {
+		limit = len(scored)
+	}
+	return scored[:limit], nil
+}
+
+func (s *Service) loadChunkCandidates(includeArchived bool) ([]chunkSearchHit, error) {
+	whereParts := []string{"a.status = ?"}
+	args := []any{StatusPublished}
+	if includeArchived {
+		whereParts = []string{}
+		args = []any{}
+	}
+	whereSQL := ""
+	if len(whereParts) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereParts, " AND ")
+	}
+	rows, err := s.db.Query(`
+		SELECT
+			a.id,
+			a.title,
+			a.summary,
+			a.category,
+			a.severity,
+			a.status,
+			a.current_version,
+			a.created_by,
+			a.updated_by,
+			a.created_at,
+			a.updated_at,
+			IFNULL(c.heading, ''),
+			IFNULL(c.content, ''),
+			c.chunk_index
+		FROM kb_articles a
+		JOIN kb_article_chunks c
+			ON c.article_id = a.id AND c.version = a.current_version
+		`+whereSQL+`
+		ORDER BY a.updated_at DESC, c.chunk_index ASC
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]chunkSearchHit, 0, 64)
+	for rows.Next() {
+		var item chunkSearchHit
+		if err := rows.Scan(
+			&item.article.ID,
+			&item.article.Title,
+			&item.article.Summary,
+			&item.article.Category,
+			&item.article.Severity,
+			&item.article.Status,
+			&item.article.CurrentVersion,
+			&item.article.CreatedBy,
+			&item.article.UpdatedBy,
+			&item.article.CreatedAt,
+			&item.article.UpdatedAt,
+			&item.heading,
+			&item.content,
+			&item.chunkIndex,
+		); err != nil {
+			return nil, err
+		}
+		item.article.Status = normalizeArticleStatusOrDraft(item.article.Status)
+		item.article.NeedsReview = s.isNeedsReview(item.article.Status, item.article.UpdatedAt)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func scoreChunkHit(hit chunkSearchHit, normalized string, tokens []string) int {
+	title := strings.ToLower(strings.TrimSpace(hit.article.Title))
+	summary := strings.ToLower(strings.TrimSpace(hit.article.Summary))
+	heading := strings.ToLower(strings.TrimSpace(hit.heading))
+	content := strings.ToLower(strings.TrimSpace(hit.content))
+	score := 0
+	if normalized != "" {
+		if strings.Contains(title, normalized) {
+			score += 36
+		}
+		if strings.Contains(summary, normalized) {
+			score += 20
+		}
+		if strings.Contains(heading, normalized) {
+			score += 24
+		}
+		if strings.Contains(content, normalized) {
+			score += 12
+		}
+	}
+	hitCount := 0
+	for _, token := range tokens {
+		matched := false
+		if token != "" && strings.Contains(title, token) {
+			score += 10
+			matched = true
+		}
+		if token != "" && strings.Contains(heading, token) {
+			score += 8
+			matched = true
+		}
+		if token != "" && strings.Contains(summary, token) {
+			score += 6
+			matched = true
+		}
+		if token != "" && strings.Contains(content, token) {
+			score += 4
+			matched = true
+		}
+		if matched {
+			hitCount++
+		}
+	}
+	return score + hitCount
+}
+
+func buildFallbackChunkAnswer(hit chunkSearchHit) string {
+	snippet := strings.TrimSpace(hit.snippet)
+	if snippet == "" {
+		snippet = snippetFromContent(hit.content, 180)
+	}
+	if snippet == "" {
+		snippet = "建议先查看该条目的适用条件、处置步骤与最近一次变更说明。"
+	}
+	if strings.TrimSpace(hit.heading) != "" {
+		return fmt.Sprintf("基于知识库条目《%s》中的“%s”片段：%s", hit.article.Title, hit.heading, snippet)
+	}
+	return fmt.Sprintf("基于知识库条目《%s》：%s", hit.article.Title, snippet)
 }
 
 func tokenizeSearchQuery(query string) []string {
@@ -808,6 +1155,209 @@ func scoreArticleByTokens(item Article, tokens []string) int {
 
 // ImportDocs 负责把目录中的 Markdown 批量导入知识库
 // 导入策略是路径去重并增量更新 避免重复导入造成版本膨胀
+func (s *Service) syncCurrentVersionChunks() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`
+		SELECT
+			a.id,
+			a.current_version,
+			IFNULL(v.content_markdown, ''),
+			IFNULL(v.created_at, a.updated_at)
+		FROM kb_articles a
+		LEFT JOIN kb_article_versions v
+			ON v.article_id = a.id AND v.version = a.current_version
+		ORDER BY a.updated_at DESC
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var articleID string
+		var version int
+		var content string
+		var createdAt string
+		if err := rows.Scan(&articleID, &version, &content, &createdAt); err != nil {
+			return err
+		}
+		var count int
+		if err := s.db.QueryRow(`
+			SELECT COUNT(1)
+			FROM kb_article_chunks
+			WHERE article_id = ? AND version = ?
+		`, articleID, version).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		if err := s.rebuildChunksTx(tx, articleID, version, content, createdAt); err != nil {
+			rollbackTx(tx)
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Service) rebuildChunksTx(tx *sql.Tx, articleID string, version int, content, createdAt string) error {
+	if tx == nil {
+		return fmt.Errorf("kb chunk tx is nil")
+	}
+	if strings.TrimSpace(articleID) == "" || version <= 0 {
+		return fmt.Errorf("%w: invalid article chunk target", ErrInvalidInput)
+	}
+	if _, err := tx.Exec(`
+		DELETE FROM kb_article_chunks
+		WHERE article_id = ? AND version = ?
+	`, articleID, version); err != nil {
+		return fmt.Errorf("delete kb chunks failed: %w", err)
+	}
+	chunks := s.buildArticleChunks(content)
+	if len(chunks) == 0 {
+		return nil
+	}
+	chunkCreatedAt := strings.TrimSpace(createdAt)
+	if chunkCreatedAt == "" {
+		chunkCreatedAt = nowRFC3339()
+	}
+	for _, chunk := range chunks {
+		if _, err := tx.Exec(`
+			INSERT INTO kb_article_chunks (
+				id, article_id, version, chunk_index, heading, content, chunk_hash, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, newID("kbc"), articleID, version, chunk.index, chunk.heading, chunk.content, chunk.hash, chunkCreatedAt); err != nil {
+			return fmt.Errorf("insert kb chunk failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) buildArticleChunks(content string) []articleChunk {
+	normalized := strings.ReplaceAll(content, "\r\n", "\n")
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return nil
+	}
+	type chunkLine struct {
+		heading string
+		text    string
+	}
+	lines := make([]chunkLine, 0, 64)
+	currentHeading := ""
+	for _, raw := range strings.Split(normalized, "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			currentHeading = strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			if currentHeading != "" {
+				lines = append(lines, chunkLine{
+					heading: currentHeading,
+					text:    currentHeading,
+				})
+			}
+			continue
+		}
+		lines = append(lines, chunkLine{
+			heading: currentHeading,
+			text:    normalizeChunkLine(trimmed),
+		})
+	}
+	if len(lines) == 0 {
+		return []articleChunk{newArticleChunk(1, "", normalized)}
+	}
+	chunkSize := s.chunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultChunkSize
+	}
+	chunkOverlap := s.chunkOverlap
+	if chunkOverlap < 0 {
+		chunkOverlap = 0
+	}
+	chunks := make([]articleChunk, 0, 8)
+	start := 0
+	for start < len(lines) {
+		var builder strings.Builder
+		chunkHeading := lines[start].heading
+		runeCount := 0
+		end := start
+		for end < len(lines) {
+			line := strings.TrimSpace(lines[end].text)
+			if line == "" {
+				end++
+				continue
+			}
+			lineRunes := len([]rune(line))
+			if runeCount > 0 && runeCount+1+lineRunes > chunkSize && end > start {
+				break
+			}
+			if builder.Len() > 0 {
+				builder.WriteByte('\n')
+			}
+			builder.WriteString(line)
+			runeCount += lineRunes + 1
+			if chunkHeading == "" && lines[end].heading != "" {
+				chunkHeading = lines[end].heading
+			}
+			end++
+		}
+		chunkContent := strings.TrimSpace(builder.String())
+		if chunkContent != "" {
+			chunks = append(chunks, newArticleChunk(len(chunks)+1, chunkHeading, chunkContent))
+		}
+		if end >= len(lines) {
+			break
+		}
+		nextStart := end
+		overlapRunes := 0
+		for i := end - 1; i > start; i-- {
+			overlapRunes += len([]rune(lines[i].text)) + 1
+			if overlapRunes >= chunkOverlap {
+				nextStart = i
+				break
+			}
+		}
+		if nextStart <= start {
+			nextStart = end
+		}
+		start = nextStart
+	}
+	if len(chunks) == 0 {
+		return []articleChunk{newArticleChunk(1, "", normalized)}
+	}
+	return chunks
+}
+
+func newArticleChunk(index int, heading, content string) articleChunk {
+	cleanHeading := strings.TrimSpace(heading)
+	cleanContent := strings.TrimSpace(content)
+	sum := sha1.Sum([]byte(cleanHeading + "\n" + cleanContent))
+	return articleChunk{
+		index:   index,
+		heading: cleanHeading,
+		content: cleanContent,
+		hash:    hex.EncodeToString(sum[:]),
+	}
+}
+
+func normalizeChunkLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "- ")
+	trimmed = strings.TrimPrefix(trimmed, "* ")
+	trimmed = strings.TrimPrefix(trimmed, "> ")
+	return strings.TrimSpace(trimmed)
+}
+
 func (s *Service) ImportDocs(rootPath, operator string) (ImportResult, error) {
 	if s == nil || s.db == nil {
 		return ImportResult{}, fmt.Errorf("kb service not ready")
@@ -972,10 +1522,23 @@ func migrate(db *sql.DB) error {
 			ref_path TEXT NOT NULL,
 			ref_title TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS kb_article_chunks (
+			id TEXT PRIMARY KEY,
+			article_id TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			chunk_index INTEGER NOT NULL,
+			heading TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			chunk_hash TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			UNIQUE(article_id, version, chunk_index)
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_articles_status_updated ON kb_articles(status, updated_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_versions_article_version ON kb_article_versions(article_id, version);`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_reviews_article_created ON kb_reviews(article_id, created_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_references_type_path ON kb_references(ref_type, ref_path);`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_chunks_article_version ON kb_article_chunks(article_id, version, chunk_index);`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_chunks_hash ON kb_article_chunks(chunk_hash);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -1508,6 +2071,33 @@ func isKBActionAllowed(status, action string) bool {
 	default:
 		return false
 	}
+}
+
+func resolveChunkSize() int {
+	raw := strings.TrimSpace(os.Getenv("KB_RAG_CHUNK_SIZE"))
+	if raw == "" {
+		return defaultChunkSize
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil || val < 120 {
+		return defaultChunkSize
+	}
+	return val
+}
+
+func resolveChunkOverlap() int {
+	raw := strings.TrimSpace(os.Getenv("KB_RAG_CHUNK_OVERLAP"))
+	if raw == "" {
+		return defaultChunkOverlap
+	}
+	val, err := strconv.Atoi(raw)
+	if err != nil || val < 0 {
+		return defaultChunkOverlap
+	}
+	if val >= resolveChunkSize() {
+		return defaultChunkOverlap
+	}
+	return val
 }
 
 func resolveReviewDays() int {

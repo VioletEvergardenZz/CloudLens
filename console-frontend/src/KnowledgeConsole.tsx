@@ -720,7 +720,7 @@ export function KnowledgeConsole() {
             {loading ? "刷新中..." : "刷新"}
           </button>
           <button className="btn secondary" type="button" onClick={() => void handleSemanticSearch()} disabled={loading}>
-            语义检索
+            RAG 检索
           </button>
           <button className="btn" type="button" onClick={() => void handleImportDocs()} disabled={importing}>
             {importing ? "导入中..." : "导入 docs"}
@@ -807,7 +807,7 @@ export function KnowledgeConsole() {
               >
                 <div className="knowledge-item-main">
                   <strong>{item.title}</strong>
-                  <span>{item.summary || "无摘要"}</span>
+                  <span>{item.matchSnippet || item.summary || "暂无摘要"}</span>
                 </div>
                 <div className="knowledge-item-meta">
                   <span className="badge ghost">{formatKnowledgeStatus(item.status)}</span>
@@ -1065,9 +1065,14 @@ export function KnowledgeConsole() {
             )}
             <div className="knowledge-citations">
               {(askResult.citations ?? []).map((item) => (
-                <span className="badge ghost" key={`${item.articleId}-${item.version}`}>
-                  {item.title} (v{item.version})
-                </span>
+                <div className="knowledge-citation-item" key={`${item.articleId}-${item.version}-${item.chunkIndex ?? 0}`}>
+                  <span className="badge ghost">
+                    {item.title} (v{item.version})
+                    {item.chunkIndex ? ` · Chunk ${item.chunkIndex}` : ""}
+                  </span>
+                  {item.heading ? <span className="muted small">{item.heading}</span> : null}
+                  {item.snippet ? <span className="muted small">{item.snippet}</span> : null}
+                </div>
               ))}
             </div>
           </div>
