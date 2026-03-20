@@ -56,6 +56,7 @@ type handler struct {
 	controlNextAgentSeq uint64
 	controlNextTaskSeq  uint64
 	controlStore        *controlSQLiteStore
+	domainProber        registryDomainProbeRunner
 
 	dashboardCacheMu     sync.Mutex
 	dashboardCacheData   any
@@ -93,6 +94,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		controlAgentKeyIdx: make(map[string]string),
 		controlTasks:       make(map[string]controlTaskState),
 		controlStore:       controlStore,
+		domainProber:       newRegistryDomainProber(registryDomainProbeOptions{}),
 		dashboardCacheTTL:  defaultDashboardTTL,
 	}
 	if h.controlStore != nil {
@@ -130,6 +132,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/control/tasks/", h.controlTaskByIDHandler)
 	mux.HandleFunc("/api/control/dispatch/pull", h.controlDispatchPullHandler)
 	mux.HandleFunc("/api/control/audit", h.controlAuditHandler)
+	mux.HandleFunc("/api/registry/domain-probe", h.registryDomainProbe)
 	mux.HandleFunc("/api/health", h.health)
 	mux.HandleFunc("/metrics", h.prometheusMetrics)
 
