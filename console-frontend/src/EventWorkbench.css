@@ -1,0 +1,165 @@
+/* 本文件用于事件工作台样式 定义事件时间线 分析区 和动作区布局 */
+
+.event-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.event-banner {
+  margin-top: 12px;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 12px;
+  background: rgba(244, 63, 94, 0.12);
+  color: #ffe4e6;
+  padding: 10px 12px;
+}
+
+.event-master-grid,
+.event-grid,
+.event-analysis-grid,
+.event-action-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.event-master-grid,
+.event-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.event-master-card,
+.event-analysis-card,
+.event-action-card,
+.event-list-item,
+.event-timeline-item,
+.event-reco-item {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 14px;
+}
+
+.event-master-card.compact {
+  display: grid;
+  align-content: start;
+}
+
+.event-master-label,
+.event-analysis-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.event-master-title {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.event-master-meta {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.event-master-value {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.event-master-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.event-list,
+.event-timeline-detail,
+.event-reco-list {
+  display: grid;
+  gap: 10px;
+}
+
+.event-list-item {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.event-list-item.active {
+  border-color: var(--accent2);
+  box-shadow: inset 3px 0 0 var(--accent2);
+}
+
+.event-list-time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.event-list-main {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.event-list-main span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.event-timeline-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.event-timeline-index {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.2), rgba(34, 211, 238, 0.2));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.event-analysis-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.event-analysis-main {
+  margin-top: 8px;
+  line-height: 1.65;
+}
+
+.event-action-buttons {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.event-reco-item {
+  display: grid;
+  gap: 4px;
+}
+
+.event-reco-item span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 960px) {
+  .event-master-grid,
+  .event-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -11,7 +11,11 @@ import type { ChartOptions } from "chart.js";
 import { CategoryScale, Chart as ChartJS, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip } from "chart.js";
 import { AlertConsole } from "./AlertConsole";
 import { ControlConsole } from "./ControlConsole";
+import { EventWorkbench } from "./EventWorkbench";
 import { KnowledgeConsole } from "./KnowledgeConsole";
+import { OverviewConsole } from "./OverviewConsole";
+import { RegistryConsole } from "./RegistryConsole";
+import { RegistryCatalogConsole } from "./RegistryCatalogConsole";
 import { SystemConsole } from "./SystemConsole";
 import { ConsoleHeader } from "./console/ConsoleHeader";
 import { ConsoleSidebar } from "./console/ConsoleSidebar";
@@ -40,6 +44,7 @@ import type {
   AiLogSummaryMeta,
   AiStatus,
   ChartPoint,
+  ConsoleView,
   ConfigSnapshot,
   DashboardPayload,
   FileFilter,
@@ -83,12 +88,23 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 const SECTION_IDS = ["overview", "config", "directory", "files", "tail", "failures", "monitor"];
 const SYSTEM_SECTION_IDS = ["system-overview", "system-resources", "system-volumes", "system-processes", "system-process-detail"];
+const OVERVIEW_SECTION_IDS = ["overview-summary", "overview-timeline", "overview-runtime", "overview-actions"];
+const EVENT_SECTION_IDS = ["event-summary", "event-timeline", "event-analysis", "event-actions"];
+const REGISTRY_SECTION_IDS = [
+  "registry-overview",
+  "registry-probe",
+  "registry-summary",
+  "registry-details",
+  "registry-health",
+  "registry-next",
+  "registry-raw",
+];
+const REGISTRY_CATALOG_SECTION_IDS = ["registry-catalog-overview", "registry-catalog-list", "registry-catalog-detail"];
 const UPLOAD_PAGE_SIZE = 5;
 const FILE_PAGE_SIZE = 10;
 const LOG_POLL_MS = 2000;
 const DASHBOARD_POLL_MS = 3000;
 const THEME_STORAGE_KEY = "gwf-theme";
-type ConsoleView = "console" | "alert" | "system" | "knowledge" | "control";
 
 type OriginalConsoleProps = {
   view: ConsoleView;
@@ -404,9 +420,36 @@ export function OriginalConsole({ view, onViewChange }: OriginalConsoleProps) {
   }, [currentRoot, rootNodes, activePath]);
 
   useEffect(() => {
+    const nextSection =
+      view === "overview"
+        ? OVERVIEW_SECTION_IDS[0]
+        : view === "events"
+          ? EVENT_SECTION_IDS[0]
+          : view === "system"
+            ? SYSTEM_SECTION_IDS[0]
+            : view === "registry"
+              ? REGISTRY_SECTION_IDS[0]
+              : view === "registryCatalog"
+                ? REGISTRY_CATALOG_SECTION_IDS[0]
+                : SECTION_IDS[0];
+    setActiveSection(nextSection);
+  }, [view]);
+
+  useEffect(() => {
     if (view === "alert" || view === "knowledge" || view === "control") return;
     if (view === "console" && !bootstrapped) return;
-    const sectionIds = view === "system" ? SYSTEM_SECTION_IDS : SECTION_IDS;
+    const sectionIds =
+      view === "overview"
+        ? OVERVIEW_SECTION_IDS
+        : view === "events"
+          ? EVENT_SECTION_IDS
+          : view === "system"
+            ? SYSTEM_SECTION_IDS
+            : view === "registry"
+              ? REGISTRY_SECTION_IDS
+              : view === "registryCatalog"
+                ? REGISTRY_CATALOG_SECTION_IDS
+                : SECTION_IDS;
     const visibleSections = visibleSectionsRef.current;
     visibleSections.clear();
     const observer = new IntersectionObserver(
@@ -1093,11 +1136,17 @@ export function OriginalConsole({ view, onViewChange }: OriginalConsoleProps) {
           activeSection={activeSection}
           sectionIds={SECTION_IDS}
           systemSectionIds={SYSTEM_SECTION_IDS}
+          registrySectionIds={REGISTRY_SECTION_IDS}
+          overviewSectionIds={OVERVIEW_SECTION_IDS}
+          eventSectionIds={EVENT_SECTION_IDS}
+          registryCatalogSectionIds={REGISTRY_CATALOG_SECTION_IDS}
           onViewChange={onViewChange}
         />
 
         <div className={`page ${view === "alert" ? "page-alert" : "page-full"}`}>
-          {view === "console" ? (
+          {view === "overview" ? (
+            <OverviewConsole onViewChange={onViewChange} />
+          ) : view === "console" ? (
             <>
               <ConsoleHeader
                 agent={heroState.agent}
@@ -1107,6 +1156,9 @@ export function OriginalConsole({ view, onViewChange }: OriginalConsoleProps) {
                 onTimeframeChange={setTimeframe}
                 theme={theme}
                 onThemeChange={setTheme}
+                eyebrow="接入工作域"
+                title="文件接入工作台"
+                description="围绕目录、上传、日志与 AI 分析组织文件入云主线。"
               />
               <OverviewSection metricCards={metricCardsState} hero={heroState} silenceValue={silenceValue} />
               <ConfigSection
@@ -1224,6 +1276,8 @@ export function OriginalConsole({ view, onViewChange }: OriginalConsoleProps) {
             </>
           ) : view === "alert" ? (
             <AlertConsole embedded />
+          ) : view === "events" ? (
+            <EventWorkbench onViewChange={onViewChange} />
           ) : view === "system" ? (
             <SystemConsole
               embedded
@@ -1232,6 +1286,10 @@ export function OriginalConsole({ view, onViewChange }: OriginalConsoleProps) {
               toggleError={systemToggleError}
               onToggleEnabled={handleSystemResourceToggle}
             />
+          ) : view === "registry" ? (
+            <RegistryConsole />
+          ) : view === "registryCatalog" ? (
+            <RegistryCatalogConsole />
           ) : view === "knowledge" ? (
             <KnowledgeConsole />
           ) : (

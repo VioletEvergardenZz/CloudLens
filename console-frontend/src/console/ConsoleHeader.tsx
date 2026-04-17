@@ -1,10 +1,10 @@
 /**
- * 文件职责：承载当前页面或模块的核心交互与状态管理
- * 关键交互：先更新本地状态 再调用接口同步 失败时给出可见反馈
- * 边界处理：对空数据 异常数据和超时请求提供兜底展示
+ * 文件职责：承接当前页面或模块的核心交互与状态管理
+ * 关键交互：先更新本地状态，再调用接口同步；失败时给出可见反馈
+ * 边界处理：对空数据、异常数据和超时请求提供兜底展示
  */
 
-/* 本文件用于主控制台头部组件 集中处理状态栏和快捷操作区 */
+/* 本文件用于文件接入工作台的头部区域，统一呈现上下文、刷新状态与主题切换 */
 
 type ConsoleHeaderProps = {
   agent: string;
@@ -14,6 +14,9 @@ type ConsoleHeaderProps = {
   onTimeframeChange: (value: "realtime" | "24h") => void;
   theme: "dark" | "light";
   onThemeChange: (value: "dark" | "light") => void;
+  eyebrow?: string;
+  title?: string;
+  description?: string;
 };
 
 export function ConsoleHeader({
@@ -24,13 +27,17 @@ export function ConsoleHeader({
   onTimeframeChange,
   theme,
   onThemeChange,
+  eyebrow = "接入工作域",
+  title = "文件接入工作台",
+  description = "统一查看监控目录、上传队列、日志检索与 AI 分析。",
 }: ConsoleHeaderProps) {
   return (
     <header className="page-header">
       <div className="brand">
         <div className="title">
-          <p className="eyebrow">文件监控控制台</p>
-          <h1>文件监控智能体控制台</h1>
+          <p className="eyebrow">{eyebrow}</p>
+          <h1>{title}</h1>
+          <p>{description}</p>
           <div className="title-meta">
             <span className="badge ghost">主机 {agent}</span>
           </div>
@@ -54,7 +61,7 @@ export function ConsoleHeader({
               type="checkbox"
               aria-label="切换浅色和深色主题"
               checked={theme === "light"}
-              onChange={(e) => onThemeChange(e.target.checked ? "light" : "dark")}
+              onChange={(event) => onThemeChange(event.target.checked ? "light" : "dark")}
             />
             <span className="slider" />
           </label>

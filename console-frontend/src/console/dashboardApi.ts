@@ -8,6 +8,7 @@
 
 import type {
   AiLogSummaryResponse,
+  AlertResponse,
   ControlAuditLogsResponse,
   ControlAgentsResponse,
   ControlTaskFailureReasonsResponse,
@@ -24,6 +25,7 @@ import type {
   KnowledgeQualityGates,
   KnowledgeRecommendationsResponse,
   KnowledgeSearchResponse,
+  RegistryDomainProbeResponse,
 } from "../types";
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
@@ -180,6 +182,14 @@ export const postAiLogSummary = async (payload: AiLogSummaryRequest): Promise<Ai
   });
   await ensureOk(res, "AI日志分析");
   return (await res.json()) as AiLogSummaryResponse;
+};
+
+export const fetchAlertDashboard = async (): Promise<AlertResponse> => {
+  const res = await fetch(`${API_BASE}/api/alerts`, {
+    headers: buildApiHeaders(),
+  });
+  await ensureOk(res, "告警概览加载");
+  return (await res.json()) as AlertResponse;
 };
 
 export type KnowledgeArticlePayload = {
@@ -530,4 +540,14 @@ export const fetchControlAuditLogs = async (params?: {
   });
   await ensureOk(res, "控制面审计日志加载");
   return (await res.json()) as ControlAuditLogsResponse;
+};
+
+export const postRegistryDomainProbe = async (domain: string): Promise<RegistryDomainProbeResponse> => {
+  const res = await fetch(`${API_BASE}/api/registry/domain-probe`, {
+    method: "POST",
+    headers: buildApiHeaders(true),
+    body: JSON.stringify({ domain }),
+  });
+  await ensureOk(res, "域名接入探测");
+  return (await res.json()) as RegistryDomainProbeResponse;
 };

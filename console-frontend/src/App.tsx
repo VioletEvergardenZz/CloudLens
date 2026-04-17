@@ -9,23 +9,26 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import { OriginalConsole } from "./OriginalConsole";
+import type { ConsoleView } from "./types";
 
 const VIEW_STORAGE_KEY = "gwf-console-view";
 
-type ViewType = "console" | "alert" | "system" | "knowledge" | "control";
-
-const resolveInitialView = (): ViewType => {
-  if (typeof window === "undefined") return "console";
+const resolveInitialView = (): ConsoleView => {
+  if (typeof window === "undefined") return "overview";
   const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+  if (stored === "overview") return "overview";
   if (stored === "alert") return "alert";
+  if (stored === "events") return "events";
   if (stored === "system") return "system";
+  if (stored === "registry") return "registry";
+  if (stored === "registryCatalog") return "registryCatalog";
   if (stored === "knowledge") return "knowledge";
   if (stored === "control") return "control";
-  return "console";
+  return "overview";
 };
 
 function App() {
-  const [view, setView] = useState<ViewType>(() => resolveInitialView());
+  const [view, setView] = useState<ConsoleView>(() => resolveInitialView());
 
   useEffect(() => {
     if (typeof window === "undefined") return;

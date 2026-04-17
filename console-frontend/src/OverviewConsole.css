@@ -1,0 +1,149 @@
+/* 本文件用于平台总览页样式 定义状态摘要 时间线 与待办布局 */
+
+.overview-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.overview-hero .section-title {
+  align-items: flex-start;
+}
+
+.overview-banner {
+  margin-bottom: 12px;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 12px;
+  background: rgba(244, 63, 94, 0.12);
+  color: #ffe4e6;
+  padding: 10px 12px;
+}
+
+.overview-card-grid,
+.overview-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.overview-stat-card,
+.overview-health-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: inherit;
+  text-align: left;
+  padding: 14px;
+  box-shadow: var(--card-glow);
+}
+
+.overview-stat-card {
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+
+.overview-stat-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent2);
+}
+
+.overview-stat-label,
+.overview-health-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overview-stat-value,
+.overview-health-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.overview-stat-hint,
+.overview-health-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.overview-health-card.compact .overview-health-value {
+  font-size: 20px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.overview-timeline-list,
+.overview-todo-list,
+.overview-change-list {
+  display: grid;
+  gap: 10px;
+}
+
+.overview-timeline-item,
+.overview-change-item {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: inherit;
+  text-align: left;
+  padding: 12px;
+}
+
+.overview-timeline-item {
+  cursor: pointer;
+}
+
+.overview-timeline-time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overview-timeline-main {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.overview-timeline-main span,
+.overview-change-item span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.overview-todo-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.overview-todo-index {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.2), rgba(34, 211, 238, 0.2));
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,91 @@
+/* 本文件用于系统台账原型页样式 定义系统列表与详情联动布局 */
+
+.registry-catalog-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.registry-catalog-summary,
+.registry-detail-grid,
+.registry-catalog-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.registry-catalog-summary {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.registry-catalog-card,
+.registry-detail-card,
+.registry-service-item,
+.registry-catalog-item {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 14px;
+  box-shadow: var(--card-glow);
+}
+
+.registry-catalog-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.registry-catalog-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.registry-catalog-layout {
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+
+.registry-catalog-list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.registry-catalog-item {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.registry-catalog-item.active {
+  border-color: var(--accent2);
+  box-shadow: inset 3px 0 0 var(--accent2);
+}
+
+.registry-catalog-badges {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.registry-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.registry-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.registry-service-list {
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 980px) {
+  .registry-catalog-layout {
+    grid-template-columns: 1fr;
+  }
+}

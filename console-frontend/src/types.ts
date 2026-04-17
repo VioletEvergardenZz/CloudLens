@@ -16,6 +16,17 @@ export type FileNode = {
   children?: FileNode[];
 };
 
+export type ConsoleView =
+  | "overview"
+  | "alert"
+  | "events"
+  | "console"
+  | "registry"
+  | "registryCatalog"
+  | "knowledge"
+  | "control"
+  | "system";
+
 export type MetricCard = {
   label: string;
   value: string;
@@ -563,4 +574,86 @@ export type ControlTaskFailureReasonsResponse = {
     type?: string;
     limit?: number;
   };
+};
+
+export type RegistryDomainRedirectHop = {
+  url: string;
+  statusCode: number;
+  location?: string;
+};
+
+export type RegistryDomainTLSProbe = {
+  status: string;
+  subjectCommonName?: string;
+  issuerCommonName?: string;
+  notBefore: string;
+  notAfter: string;
+  daysRemaining: number;
+  serverNameMatched: boolean;
+  timeValid: boolean;
+  dnsNames?: string[];
+};
+
+export type RegistryDomainDNSProbe = {
+  host: string;
+  cname?: string;
+  addresses: string[];
+  publiclyRoutable: boolean;
+  error?: string;
+};
+
+export type RegistryDomainHTTPProbe = {
+  url: string;
+  finalUrl?: string;
+  reachable: boolean;
+  statusCode?: number;
+  contentType?: string;
+  contentKind?: string;
+  pageKind?: string;
+  title?: string;
+  hasApiHint: boolean;
+  redirected: boolean;
+  redirectChain?: RegistryDomainRedirectHop[];
+  tls?: RegistryDomainTLSProbe;
+  error?: string;
+};
+
+export type RegistryDomainHealthCandidate = {
+  path: string;
+  url: string;
+  finalUrl?: string;
+  reachable: boolean;
+  statusCode?: number;
+  contentType?: string;
+  contentKind?: string;
+  likelyHealth: boolean;
+  error?: string;
+};
+
+export type RegistryDomainPendingItem = {
+  code: string;
+  title: string;
+  detail: string;
+  required: boolean;
+};
+
+export type RegistryDomainProbeResult = {
+  domain: string;
+  normalizedTarget: string;
+  probedAt: string;
+  reachable: boolean;
+  recommendedBaseUrl: string;
+  suggestedAccessType: string;
+  suggestedAccessTypeLabel: string;
+  dns: RegistryDomainDNSProbe;
+  httpRoot: RegistryDomainHTTPProbe;
+  httpsRoot: RegistryDomainHTTPProbe;
+  tls?: RegistryDomainTLSProbe;
+  healthCandidates: RegistryDomainHealthCandidate[];
+  pendingItems: RegistryDomainPendingItem[];
+};
+
+export type RegistryDomainProbeResponse = {
+  ok: boolean;
+  result: RegistryDomainProbeResult;
 };
