@@ -4,7 +4,7 @@
  * 边界处理：对空数据、异常数据和超时请求提供兜底展示
  */
 
-/* 本文件用于统一运维平台壳层导航，按工作域组织入口并保留页内分区跳转 */
+/* 本文件用于统一运维平台侧边导航，采用更接近常规 Web 后台的左侧栏结构 */
 
 import type { ConsoleView } from "../types";
 import { PLATFORM_DOMAINS, resolveDomainByView } from "./platformNavigation";
@@ -83,37 +83,37 @@ const resolveRegistryMeta = (id: string): NavMeta => {
 const resolveOverviewMeta = (id: string): NavMeta => {
   switch (id) {
     case "overview-summary":
-      return { title: "全局状态", desc: "今日风险、待办与当班入口", badge: "摘要" };
+      return { title: "值班入口", desc: "风险、优先队列与当班判断", badge: "入口" };
     case "overview-timeline":
-      return { title: "事件态势", desc: "告警趋势与事件时间线", badge: "趋势" };
+      return { title: "优先队列", desc: "当前先处理什么", badge: "队列" };
     case "overview-runtime":
-      return { title: "运行健康", desc: "文件入云、告警、AI 与执行主线", badge: "健康" };
+      return { title: "系统热点", desc: "系统对象与闭环主线", badge: "热点" };
     default:
-      return { title: "待办与变化", desc: "待处理事项与最近变化", badge: "待办" };
+      return { title: "补充上下文", desc: "观察与备注", badge: "上下文" };
   }
 };
 
 const resolveEventMeta = (id: string): NavMeta => {
   switch (id) {
     case "event-summary":
-      return { title: "事件摘要", desc: "等级、状态与责任归属", badge: "摘要" };
+      return { title: "事件概览", desc: "事件标题、级别和责任人", badge: "概览" };
     case "event-timeline":
-      return { title: "时间线", desc: "事件流转与处置轨迹", badge: "时间线" };
+      return { title: "事件队列", desc: "切换事件与时间线", badge: "队列" };
     case "event-analysis":
-      return { title: "分析区", desc: "AI、根因与日志摘要", badge: "分析" };
+      return { title: "诊断面", desc: "证据、判断与影响面", badge: "诊断" };
     default:
-      return { title: "动作与知识", desc: "SOP、任务与审计入口", badge: "动作" };
+      return { title: "动作面", desc: "任务、SOP 和复盘", badge: "动作" };
   }
 };
 
 const resolveRegistryCatalogMeta = (id: string): NavMeta => {
   switch (id) {
     case "registry-catalog-overview":
-      return { title: "台账总览", desc: "系统、环境与完整度", badge: "总览" };
+      return { title: "系统总览", desc: "台账摘要与设计定位", badge: "总览" };
     case "registry-catalog-list":
-      return { title: "系统列表", desc: "系统筛选与目录列表", badge: "列表" };
+      return { title: "系统目录", desc: "筛选并进入单系统详情", badge: "目录" };
     default:
-      return { title: "系统详情", desc: "服务、路由、健康与配置", badge: "详情" };
+      return { title: "系统详情", desc: "服务、事件、SOP 与责任", badge: "详情" };
   }
 };
 
@@ -169,132 +169,100 @@ export function ConsoleSidebar({
   );
 
   return (
-    <aside className="sidebar platform-shell-nav">
-      <div className="platform-brand-row">
+    <aside className="sidebar platform-sidebar">
+      <div className="sidebar-brand">
         <div className="brand-logo brand-logo-small">
           <div className="brand-logo-mark">GWF</div>
           <div className="brand-logo-sub">Go Watch File</div>
         </div>
-        <div className="platform-context">
-          <div className="platform-context-title">统一运维工作台</div>
-          <div className="platform-context-sub">值班驱动、事件收口、接入纳管、知识沉淀、执行回链</div>
+        <div className="sidebar-brand-copy">
+          <strong>统一运维工作台</strong>
+          <span>更像正常 Web 后台的左侧导航，先把主线看清楚。</span>
         </div>
       </div>
 
-      <div className="platform-shell-intent">
-        <span className="badge ghost">设计收敛</span>
-        <strong>先用三块主线把工作收住：值班总控、事件处置、系统上下文。</strong>
-        <span>接入、知识、执行继续保留，但退回支撑域，不再和主线抢第一注意力。</span>
+      <div className="sidebar-summary">
+        <span className="badge ghost">{activeDomain.badge}</span>
+        <strong>{activeDomain.title}</strong>
+        <p>{activeDomain.desc}</p>
+        <div className="sidebar-summary-objective">{activeDomain.objective}</div>
       </div>
 
-      <div className="platform-domain-section" role="tablist" aria-label="统一运维工作域导航">
-        <div className="platform-domain-section-head">
-          <div>
-            <div className="platform-domain-section-title">主线工作域</div>
-            <div className="platform-domain-section-sub">先看值班，再收口事件，最后落到系统上下文。</div>
-          </div>
-          <span className="badge ghost">默认工作面</span>
-        </div>
-        <div className="platform-domain-grid primary">
+      <div className="sidebar-group">
+        <div className="sidebar-group-title">主线工作域</div>
+        <div className="sidebar-nav-list">
           {primaryDomains.map((domain) => {
             const active = domain.id === activeDomain.id;
             return (
               <button
                 key={domain.id}
-                className={`domain-card ${active ? "active" : ""}`}
+                className={`sidebar-nav-button ${active ? "active" : ""}`}
                 type="button"
-                role="tab"
-                aria-selected={active}
                 onClick={() => onViewChange(domain.views[0].id)}
               >
-                <div className="domain-card-head">
-                  <span className="badge ghost">{domain.badge}</span>
-                  <span className="domain-card-step">{domain.views.length} 个工作台</span>
-                </div>
-                <div className="domain-card-title">{domain.title}</div>
-                <div className="domain-card-desc">{domain.desc}</div>
-                <div className="domain-card-objective">{domain.objective}</div>
+                <span className="sidebar-nav-label">{domain.title}</span>
+                <span className="sidebar-nav-desc">{domain.desc}</span>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="platform-domain-section" role="tablist" aria-label="统一运维支撑域导航">
-        <div className="platform-domain-section-head">
-          <div>
-            <div className="platform-domain-section-title">支撑工作域</div>
-            <div className="platform-domain-section-sub">这些页面服务主线，不单独承担用户的第一工作起点。</div>
-          </div>
-          <span className="badge ghost">支撑面</span>
-        </div>
-        <div className="platform-domain-grid support">
+      <div className="sidebar-group">
+        <div className="sidebar-group-title">支撑工作域</div>
+        <div className="sidebar-nav-list">
           {supportDomains.map((domain) => {
             const active = domain.id === activeDomain.id;
             return (
               <button
                 key={domain.id}
-                className={`domain-card domain-card-support ${active ? "active" : ""}`}
+                className={`sidebar-nav-button support ${active ? "active" : ""}`}
                 type="button"
-                role="tab"
-                aria-selected={active}
                 onClick={() => onViewChange(domain.views[0].id)}
               >
-                <div className="domain-card-head">
-                  <span className="badge ghost">{domain.badge}</span>
-                  <span className="domain-card-step">{domain.views.length} 个工作台</span>
-                </div>
-                <div className="domain-card-title">{domain.title}</div>
-                <div className="domain-card-desc">{domain.desc}</div>
-                <div className="domain-card-objective">{domain.objective}</div>
+                <span className="sidebar-nav-label">{domain.title}</span>
+                <span className="sidebar-nav-desc">{domain.desc}</span>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="platform-workspace-row">
-        <div className="platform-workspace-copy">
-          <div className="platform-workspace-eyebrow">{activeDomain.badge}</div>
-          <div className="platform-workspace-title">{activeDomain.title}</div>
-          <div className="platform-workspace-sub">{activeDomain.desc}</div>
-        </div>
-
-        <div className="platform-workspace-nav" role="tablist" aria-label={`${activeDomain.title}工作台切换`}>
+      <div className="sidebar-group">
+        <div className="sidebar-group-title">当前页面</div>
+        <div className="sidebar-workspace-list">
           {activeDomain.views.map((workspace) => (
             <button
               key={workspace.id}
-              className={`workspace-pill ${view === workspace.id ? "active" : ""}`}
+              className={`sidebar-workspace-button ${view === workspace.id ? "active" : ""}`}
               type="button"
-              role="tab"
-              aria-selected={view === workspace.id}
               onClick={() => onViewChange(workspace.id)}
             >
-              <span className="workspace-pill-title">{workspace.label}</span>
-              <span className="workspace-pill-desc">{workspace.desc}</span>
+              <span className="sidebar-nav-label">{workspace.label}</span>
+              <span className="sidebar-nav-desc">{workspace.desc}</span>
             </button>
           ))}
         </div>
       </div>
 
       {sectionConfig.ids.length ? (
-        <nav className="platform-section-nav">
-          {sectionConfig.ids.map((id) => {
-            const meta = sectionConfig.resolver(id);
-            return (
-              <a key={id} className={`nav-item ${activeSection === id ? "active" : ""}`} href={`#${id}`}>
-                <div className="nav-label">
-                  <span className={`nav-dot ${activeSection === id ? "live" : ""}`} />
-                  <div>
-                    <div className="nav-label-title">{meta.title}</div>
-                    <small>{meta.desc}</small>
+        <div className="sidebar-group sidebar-section-group">
+          <div className="sidebar-group-title">页内结构</div>
+          <nav className="sidebar-section-nav">
+            {sectionConfig.ids.map((id) => {
+              const meta = sectionConfig.resolver(id);
+              return (
+                <a key={id} className={`sidebar-section-link ${activeSection === id ? "active" : ""}`} href={`#${id}`}>
+                  <div className="sidebar-section-main">
+                    <span className="sidebar-section-title">{meta.title}</span>
+                    <span className="sidebar-section-desc">{meta.desc}</span>
                   </div>
-                </div>
-                <span className="badge ghost">{meta.badge}</span>
-              </a>
-            );
-          })}
-        </nav>
+                  <span className="badge ghost">{meta.badge}</span>
+                </a>
+              );
+            })}
+          </nav>
+        </div>
       ) : null}
     </aside>
   );
