@@ -156,6 +156,8 @@ export function ConsoleSidebar({
   onViewChange,
 }: ConsoleSidebarProps) {
   const activeDomain = resolveDomainByView(view);
+  const primaryDomains = PLATFORM_DOMAINS.filter((domain) => domain.tier === "primary");
+  const supportDomains = PLATFORM_DOMAINS.filter((domain) => domain.tier === "support");
   const sectionConfig = resolveSectionConfig(
     view,
     sectionIds,
@@ -179,28 +181,76 @@ export function ConsoleSidebar({
         </div>
       </div>
 
-      <div className="platform-domain-grid" role="tablist" aria-label="统一运维工作域导航">
-        {PLATFORM_DOMAINS.map((domain) => {
-          const active = domain.id === activeDomain.id;
-          return (
-            <button
-              key={domain.id}
-              className={`domain-card ${active ? "active" : ""}`}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onViewChange(domain.views[0].id)}
-            >
-              <div className="domain-card-head">
-                <span className="badge ghost">{domain.badge}</span>
-                <span className="domain-card-step">{domain.views.length} 个工作台</span>
-              </div>
-              <div className="domain-card-title">{domain.title}</div>
-              <div className="domain-card-desc">{domain.desc}</div>
-              <div className="domain-card-objective">{domain.objective}</div>
-            </button>
-          );
-        })}
+      <div className="platform-shell-intent">
+        <span className="badge ghost">设计收敛</span>
+        <strong>先用三块主线把工作收住：值班总控、事件处置、系统上下文。</strong>
+        <span>接入、知识、执行继续保留，但退回支撑域，不再和主线抢第一注意力。</span>
+      </div>
+
+      <div className="platform-domain-section" role="tablist" aria-label="统一运维工作域导航">
+        <div className="platform-domain-section-head">
+          <div>
+            <div className="platform-domain-section-title">主线工作域</div>
+            <div className="platform-domain-section-sub">先看值班，再收口事件，最后落到系统上下文。</div>
+          </div>
+          <span className="badge ghost">默认工作面</span>
+        </div>
+        <div className="platform-domain-grid primary">
+          {primaryDomains.map((domain) => {
+            const active = domain.id === activeDomain.id;
+            return (
+              <button
+                key={domain.id}
+                className={`domain-card ${active ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onViewChange(domain.views[0].id)}
+              >
+                <div className="domain-card-head">
+                  <span className="badge ghost">{domain.badge}</span>
+                  <span className="domain-card-step">{domain.views.length} 个工作台</span>
+                </div>
+                <div className="domain-card-title">{domain.title}</div>
+                <div className="domain-card-desc">{domain.desc}</div>
+                <div className="domain-card-objective">{domain.objective}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="platform-domain-section" role="tablist" aria-label="统一运维支撑域导航">
+        <div className="platform-domain-section-head">
+          <div>
+            <div className="platform-domain-section-title">支撑工作域</div>
+            <div className="platform-domain-section-sub">这些页面服务主线，不单独承担用户的第一工作起点。</div>
+          </div>
+          <span className="badge ghost">支撑面</span>
+        </div>
+        <div className="platform-domain-grid support">
+          {supportDomains.map((domain) => {
+            const active = domain.id === activeDomain.id;
+            return (
+              <button
+                key={domain.id}
+                className={`domain-card domain-card-support ${active ? "active" : ""}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => onViewChange(domain.views[0].id)}
+              >
+                <div className="domain-card-head">
+                  <span className="badge ghost">{domain.badge}</span>
+                  <span className="domain-card-step">{domain.views.length} 个工作台</span>
+                </div>
+                <div className="domain-card-title">{domain.title}</div>
+                <div className="domain-card-desc">{domain.desc}</div>
+                <div className="domain-card-objective">{domain.objective}</div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="platform-workspace-row">

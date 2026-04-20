@@ -10,6 +10,7 @@ export type WorkspaceMeta = {
 
 export type PlatformDomainMeta = {
   id: PlatformDomainId;
+  tier: "primary" | "support";
   title: string;
   desc: string;
   objective: string;
@@ -20,6 +21,7 @@ export type PlatformDomainMeta = {
 export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   {
     id: "duty",
+    tier: "primary",
     title: "值班",
     desc: "先看风险、待办和交接动态，值班页是所有动作的起点。",
     objective: "发现 -> 分诊 -> 进入工作台",
@@ -34,6 +36,7 @@ export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   },
   {
     id: "incident",
+    tier: "primary",
     title: "事件",
     desc: "把批量分诊和单事件处置放到同一个工作域里，不再来回跳页。",
     objective: "分诊 -> 分析 -> 处置 -> 复盘",
@@ -53,6 +56,7 @@ export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   },
   {
     id: "ingest",
+    tier: "support",
     title: "接入",
     desc: "把文件接入和域名接入收束到一条纳管主线上，减少孤立入口。",
     objective: "接入 -> 确认 -> 纳管草案",
@@ -72,6 +76,7 @@ export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   },
   {
     id: "system",
+    tier: "primary",
     title: "系统",
     desc: "从系统目录进入单系统详情，承接纳管事实、健康状态和最近事件。",
     objective: "纳管目录 -> 系统详情 -> 排障上下文",
@@ -91,6 +96,7 @@ export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   },
   {
     id: "knowledge",
+    tier: "support",
     title: "知识",
     desc: "把知识库从文档存放区变成事件沉淀、SOP 复用和经验回写中心。",
     objective: "事件 -> SOP -> 知识复用",
@@ -105,6 +111,7 @@ export const PLATFORM_DOMAINS: PlatformDomainMeta[] = [
   },
   {
     id: "execution",
+    tier: "support",
     title: "执行",
     desc: "围绕任务执行、结果追踪和审计，把动作真正挂回事件闭环。",
     objective: "动作下发 -> 执行追踪 -> 审计回链",

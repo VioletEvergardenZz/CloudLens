@@ -1,4 +1,4 @@
-/* 本文件用于事件工作台样式 定义事件时间线 分析区 和动作区布局 */
+/* 本文件用于事件工作台样式 强化单事件诊断、动作面与复盘素材布局 */
 
 .event-shell {
   display: grid;
@@ -14,71 +14,92 @@
   padding: 10px 12px;
 }
 
-.event-master-grid,
-.event-grid,
-.event-analysis-grid,
-.event-action-grid {
+.event-command-grid,
+.event-workbench-grid,
+.event-diagnosis-grid,
+.event-context-grid,
+.event-bottom-grid,
+.event-postmortem-list {
   display: grid;
   gap: 16px;
 }
 
-.event-master-grid,
-.event-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.event-command-grid {
+  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(220px, 1fr));
 }
 
-.event-master-card,
+.event-command-card,
 .event-analysis-card,
 .event-action-card,
 .event-list-item,
 .event-timeline-item,
-.event-reco-item {
+.event-reco-item,
+.event-evidence-item,
+.event-context-card,
+.event-postmortem-item {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--panel);
   padding: 14px;
 }
 
-.event-master-card.compact {
+.event-command-card {
   display: grid;
-  align-content: start;
+  gap: 8px;
 }
 
-.event-master-label,
+.event-command-card.featured {
+  background:
+    linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(34, 211, 238, 0.08)),
+    var(--panel);
+}
+
+.event-command-label,
 .event-analysis-label {
   color: var(--muted);
   font-size: 12px;
 }
 
-.event-master-title {
-  margin-top: 8px;
-  font-size: 22px;
-  font-weight: 700;
+.event-command-title {
+  font-size: 24px;
+  font-weight: 800;
   line-height: 1.35;
 }
 
-.event-master-meta {
-  margin-top: 10px;
+.event-command-main {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.event-command-sub {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.event-command-meta,
+.event-action-buttons {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-.event-master-value {
-  margin-top: 8px;
-  font-size: 18px;
-  font-weight: 700;
+.event-workbench-grid {
+  grid-template-columns: 320px minmax(0, 1.2fr) minmax(280px, 0.95fr);
+  align-items: start;
 }
 
-.event-master-hint {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
+.event-column {
+  display: grid;
+  gap: 12px;
+  align-content: start;
 }
 
 .event-list,
 .event-timeline-detail,
-.event-reco-list {
+.event-reco-list,
+.event-evidence-list {
   display: grid;
   gap: 10px;
 }
@@ -88,6 +109,12 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.event-list-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.35);
 }
 
 .event-list-item.active {
@@ -106,18 +133,26 @@
   gap: 4px;
 }
 
-.event-list-main span {
+.event-list-main span,
+.event-reco-item span,
+.event-context-card span,
+.event-postmortem-item span {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.5;
 }
 
-.event-timeline-item {
+.event-timeline-item,
+.event-evidence-item,
+.event-postmortem-item {
   display: flex;
   gap: 12px;
   align-items: flex-start;
 }
 
-.event-timeline-index {
+.event-timeline-index,
+.event-evidence-index,
+.event-postmortem-index {
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
@@ -130,36 +165,41 @@
   font-weight: 700;
 }
 
-.event-analysis-grid {
+.event-diagnosis-grid,
+.event-context-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.event-analysis-main {
+.event-analysis-main,
+.event-action-main {
   margin-top: 8px;
-  line-height: 1.65;
+  line-height: 1.7;
 }
 
-.event-action-buttons {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.event-reco-item {
+.event-action-card {
   display: grid;
-  gap: 4px;
+  gap: 10px;
 }
 
-.event-reco-item span {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+.event-bottom-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
 }
 
-@media (max-width: 960px) {
-  .event-master-grid,
-  .event-grid {
+@media (max-width: 1200px) {
+  .event-command-grid,
+  .event-workbench-grid,
+  .event-bottom-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .event-command-title {
+    font-size: 20px;
+  }
+
+  .event-action-buttons .btn {
+    width: 100%;
+    justify-content: center;
   }
 }

@@ -1,75 +1,181 @@
-/* 本文件用于平台总览页样式 定义状态摘要 时间线 与待办布局 */
+/* 本文件用于值班驾驶舱样式 强化值班判断、优先队列与系统热点布局 */
 
 .overview-shell {
   display: grid;
   gap: 16px;
 }
 
-.overview-hero .section-title {
+.overview-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  overflow: hidden;
+}
+
+.overview-command-main,
+.overview-command-side,
+.overview-priority-list,
+.overview-handoff-list,
+.overview-hotspot-list,
+.overview-lane-list,
+.overview-moment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-command-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.overview-command-head h2 {
+  margin: 6px 0 0;
+  font-size: 28px;
+  line-height: 1.25;
+}
+
+.overview-refresh {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.overview-command-copy {
+  margin: 0;
+  color: var(--text);
+  opacity: 0.88;
+  line-height: 1.7;
 }
 
 .overview-banner {
-  margin-bottom: 12px;
   border: 1px solid rgba(244, 63, 94, 0.35);
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(244, 63, 94, 0.12);
   color: #ffe4e6;
   padding: 10px 12px;
 }
 
-.overview-card-grid,
-.overview-health-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+.overview-signal-strip,
+.overview-quick-actions,
+.overview-owner-tags {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.overview-stat-card,
-.overview-health-card {
-  width: 100%;
+.overview-signal-pill {
+  padding: 7px 12px;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
-  color: inherit;
-  text-align: left;
-  padding: 14px;
-  box-shadow: var(--card-glow);
-}
-
-.overview-stat-card {
-  cursor: pointer;
-  transition: transform 0.16s ease, border-color 0.16s ease;
-}
-
-.overview-stat-card:hover {
-  transform: translateY(-1px);
-  border-color: var(--accent2);
-}
-
-.overview-stat-label,
-.overview-health-label {
-  color: var(--muted);
+  background: var(--surface-2);
+  color: var(--text);
   font-size: 12px;
-}
-
-.overview-stat-value,
-.overview-health-value {
-  margin-top: 8px;
-  font-size: 24px;
   font-weight: 700;
 }
 
-.overview-stat-hint,
-.overview-health-hint {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+.overview-signal-pill.danger {
+  background: rgba(244, 63, 94, 0.16);
+  border-color: rgba(244, 63, 94, 0.3);
 }
 
-.overview-health-card.compact .overview-health-value {
-  font-size: 20px;
+.overview-signal-pill.warning {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.overview-signal-pill.info {
+  background: rgba(34, 211, 238, 0.14);
+  border-color: rgba(34, 211, 238, 0.26);
+}
+
+.overview-signal-pill.neutral {
+  background: var(--surface-2);
+}
+
+.overview-quick-button,
+.overview-hotspot-card {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    var(--panel);
+  color: inherit;
+  text-align: left;
+  padding: 14px;
+  cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.overview-quick-button {
+  min-width: 220px;
+  display: grid;
+  gap: 6px;
+  flex: 1 1 220px;
+}
+
+.overview-quick-button:hover,
+.overview-hotspot-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.35);
+  box-shadow: var(--card-glow);
+}
+
+.overview-quick-button strong,
+.overview-owner-card strong,
+.overview-moment-item strong,
+.overview-lane-card strong,
+.overview-handoff-item strong,
+.overview-priority-main strong {
+  font-size: 14px;
+}
+
+.overview-quick-button span,
+.overview-owner-card p,
+.overview-moment-item span,
+.overview-lane-card span,
+.overview-handoff-item span,
+.overview-priority-main span,
+.overview-hotspot-trend {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.overview-command-side {
+  align-content: start;
+}
+
+.overview-shift-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(34, 211, 238, 0.08)),
+    var(--panel);
+  padding: 16px;
+  box-shadow: var(--card-glow);
+}
+
+.overview-shift-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.overview-shift-value {
+  margin-top: 10px;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.overview-shift-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .overview-grid {
@@ -78,72 +184,121 @@
   gap: 16px;
 }
 
-.overview-timeline-list,
-.overview-todo-list,
-.overview-change-list {
-  display: grid;
-  gap: 10px;
+.overview-grid-primary {
+  align-items: start;
 }
 
-.overview-timeline-item,
-.overview-change-item {
-  width: 100%;
+.overview-priority-item,
+.overview-handoff-item,
+.overview-lane-card,
+.overview-moment-item,
+.overview-owner-card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--panel);
-  color: inherit;
-  text-align: left;
-  padding: 12px;
+  padding: 14px;
 }
 
-.overview-timeline-item {
-  cursor: pointer;
-}
-
-.overview-timeline-time {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.overview-timeline-main {
-  display: grid;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.overview-timeline-main span,
-.overview-change-item span {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.overview-todo-item {
+.overview-priority-item {
   display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  padding: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.overview-todo-index {
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(249, 115, 22, 0.2), rgba(34, 211, 238, 0.2));
-  color: var(--text);
+.overview-priority-item.tone-danger {
+  border-color: rgba(244, 63, 94, 0.3);
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.08), rgba(255, 255, 255, 0.01)), var(--panel);
+}
+
+.overview-priority-item.tone-warning {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(255, 255, 255, 0.01)), var(--panel);
+}
+
+.overview-priority-item.tone-info {
+  border-color: rgba(34, 211, 238, 0.28);
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.08), rgba(255, 255, 255, 0.01)), var(--panel);
+}
+
+.overview-priority-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.overview-priority-owner,
+.overview-lane-title {
+  color: var(--accent2);
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.overview-handoff-item,
+.overview-lane-card,
+.overview-moment-item {
+  display: grid;
+  gap: 8px;
+}
+
+.overview-hotspot-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.overview-hotspot-card {
+  display: grid;
+  gap: 10px;
+}
+
+.overview-hotspot-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.overview-hotspot-signal {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.overview-lane-list {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.overview-owner-card {
+  gap: 10px;
+}
+
+.overview-owner-card p {
+  margin: 0;
+}
+
+@media (max-width: 1120px) {
+  .overview-command {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 960px) {
   .overview-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .overview-command-head h2 {
+    font-size: 22px;
+  }
+
+  .overview-priority-item {
+    align-items: stretch;
+  }
+
+  .overview-priority-item .btn {
+    width: 100%;
+    justify-content: center;
   }
 }

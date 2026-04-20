@@ -1,13 +1,27 @@
-/* 本文件用于系统台账原型页样式 定义系统列表与详情联动布局 */
+/* 本文件用于系统台账与系统详情样式 突出台账筛选、系统上下文与最近事件 */
 
 .registry-catalog-shell {
   display: grid;
   gap: 16px;
 }
 
+.registry-catalog-hero {
+  display: grid;
+  gap: 14px;
+}
+
+.registry-catalog-copy {
+  margin: 0;
+  color: var(--text);
+  opacity: 0.88;
+  line-height: 1.7;
+}
+
 .registry-catalog-summary,
 .registry-detail-grid,
-.registry-catalog-layout {
+.registry-catalog-layout,
+.registry-detail-layout,
+.registry-detail-ribbon {
   display: grid;
   gap: 16px;
 }
@@ -19,7 +33,10 @@
 .registry-catalog-card,
 .registry-detail-card,
 .registry-service-item,
-.registry-catalog-item {
+.registry-catalog-item,
+.registry-ribbon-card,
+.registry-side-card,
+.registry-side-item {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--panel);
@@ -42,7 +59,9 @@
   grid-template-columns: 320px minmax(0, 1fr);
 }
 
-.registry-catalog-list {
+.registry-catalog-list,
+.registry-service-list,
+.registry-side-list {
   display: grid;
   gap: 10px;
   align-content: start;
@@ -53,6 +72,12 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+
+.registry-catalog-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.35);
 }
 
 .registry-catalog-item.active {
@@ -60,11 +85,61 @@
   box-shadow: inset 3px 0 0 var(--accent2);
 }
 
-.registry-catalog-badges {
+.registry-catalog-badges,
+.registry-detail-meta,
+.registry-route-list {
   margin-top: 8px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.registry-detail-headline {
+  display: grid;
+  gap: 10px;
+}
+
+.registry-detail-headline p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.registry-detail-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.registry-detail-title-row h2 {
+  margin: 0;
+}
+
+.registry-detail-ribbon {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.registry-ribbon-card {
+  display: grid;
+  gap: 8px;
+}
+
+.registry-ribbon-card small,
+.registry-side-title {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.registry-detail-layout {
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.9fr);
+  align-items: start;
+}
+
+.registry-detail-main,
+.registry-detail-side {
+  display: grid;
+  gap: 16px;
 }
 
 .registry-detail-grid {
@@ -79,13 +154,35 @@
   margin-bottom: 10px;
 }
 
-.registry-service-list {
+.registry-service-item {
+  display: grid;
+  gap: 4px;
+}
+
+.registry-side-card {
   display: grid;
   gap: 10px;
 }
 
-@media (max-width: 980px) {
-  .registry-catalog-layout {
+.registry-side-title {
+  font-weight: 700;
+}
+
+.registry-side-item {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.registry-side-item span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 1120px) {
+  .registry-catalog-layout,
+  .registry-detail-layout {
     grid-template-columns: 1fr;
   }
 }
