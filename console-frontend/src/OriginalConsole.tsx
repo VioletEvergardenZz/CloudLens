@@ -104,7 +104,7 @@ const UPLOAD_PAGE_SIZE = 5;
 const FILE_PAGE_SIZE = 10;
 const LOG_POLL_MS = 2000;
 const DASHBOARD_POLL_MS = 3000;
-const THEME_STORAGE_KEY = "gwf-theme";
+const THEME_STORAGE_KEY = "gwf-theme-v2";
 
 type OriginalConsoleProps = {
   view: ConsoleView;
@@ -117,11 +117,10 @@ type LogFetchOptions = {
 };
 
 const getPreferredTheme = (): "dark" | "light" => {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
-  if (window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light";
-  return "dark";
+  return "light";
 };
 
 const emptyHero: HeroCopy = {

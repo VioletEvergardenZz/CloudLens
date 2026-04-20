@@ -9,14 +9,6 @@
   gap: 16px;
 }
 
-.overview-page-header,
-.overview-note-item,
-.overview-action-card,
-.overview-workflow-item,
-.overview-stat-card {
-  border-radius: 18px;
-}
-
 .overview-header-top {
   display: flex;
   justify-content: space-between;
@@ -53,11 +45,9 @@
   display: grid;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 16px;
-  background:
-    linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(34, 211, 238, 0.08)),
-    var(--panel);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--surface-1);
 }
 
 .overview-meta-card span,
@@ -103,14 +93,22 @@
 .overview-stat-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1);
 }
 
 .overview-stat-card {
   display: grid;
   gap: 8px;
-  border: 1px solid var(--border);
-  padding: 16px;
-  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 14px;
+  background: transparent;
+}
+
+.overview-stat-card:last-child {
+  border-right: none;
 }
 
 .overview-stat-card strong {
@@ -186,9 +184,16 @@
 .overview-workflow-item {
   display: grid;
   gap: 8px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  padding: 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  padding: 0 0 12px;
+}
+
+.overview-note-item:last-child,
+.overview-workflow-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .overview-note-item strong,
@@ -208,19 +213,24 @@
   display: grid;
   gap: 10px;
   width: 100%;
-  border: 1px solid var(--border);
-  padding: 14px;
-  background: var(--panel);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 12px;
+  background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
-  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.16s ease;
 }
 
 .overview-action-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(34, 211, 238, 0.35);
-  box-shadow: var(--card-glow);
+  background: var(--surface-1);
+}
+
+.overview-action-card:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .overview-action-top {
@@ -239,6 +249,10 @@
 @media (max-width: 1280px) {
   .overview-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-stat-card:nth-child(2n) {
+    border-right: none;
   }
 }
 
@@ -263,6 +277,15 @@
 
   .overview-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .overview-stat-card {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .overview-stat-card:last-child {
+    border-bottom: none;
   }
 
   .overview-header-actions .btn {

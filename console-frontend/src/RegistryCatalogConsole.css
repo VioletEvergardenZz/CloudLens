@@ -43,6 +43,10 @@
 .registry-summary-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1);
 }
 
 .registry-summary-card,
@@ -50,7 +54,7 @@
 .registry-env-card,
 .registry-list-item {
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--panel);
   padding: 16px;
 }
@@ -59,6 +63,17 @@
 .registry-detail-card {
   display: grid;
   gap: 8px;
+}
+
+.registry-summary-card {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.registry-summary-card:last-child {
+  border-right: none;
 }
 
 .registry-summary-card span,
@@ -171,8 +186,8 @@
   gap: 4px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 10px;
+  background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -186,8 +201,8 @@
 
 .registry-tab-button.active {
   border-color: var(--accent);
-  background: linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(34, 211, 238, 0.08));
-  box-shadow: var(--card-glow);
+  background: var(--surface-2);
+  box-shadow: none;
 }
 
 .registry-tab-button strong {
@@ -248,6 +263,16 @@
 .registry-list-item {
   display: grid;
   gap: 6px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 10px;
+  background: transparent;
+}
+
+.registry-list-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 @media (max-width: 1280px) {
@@ -255,12 +280,25 @@
   .registry-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .registry-summary-card:nth-child(2n) {
+    border-right: none;
+  }
 }
 
 @media (max-width: 900px) {
   .registry-summary-grid,
   .registry-overview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .registry-summary-card {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .registry-summary-card:last-child {
+    border-bottom: none;
   }
 }
 

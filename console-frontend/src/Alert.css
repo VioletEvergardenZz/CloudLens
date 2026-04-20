@@ -120,8 +120,8 @@
   gap: 4px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 10px;
+  background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -135,8 +135,8 @@
 
 .alert-tab-button.active {
   border-color: var(--accent);
-  background: linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(34, 211, 238, 0.08));
-  box-shadow: var(--card-glow);
+  background: var(--surface-2);
+  box-shadow: none;
 }
 
 .alert-tab-button strong {
@@ -151,6 +151,10 @@
 
 .alert-kpi-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1);
 }
 
 .alert-kpi-card,
@@ -160,7 +164,7 @@
 .alert-rule-group,
 .alert-rule-card {
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--panel);
   padding: 16px;
 }
@@ -170,6 +174,28 @@
 .alert-rule-metric {
   display: grid;
   gap: 8px;
+}
+
+.alert-kpi-card {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.alert-kpi-card:last-child {
+  border-right: none;
+}
+
+.alert-rule-metric {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.alert-rule-metric:last-child {
+  border-right: none;
 }
 
 .alert-kpi-card span,
@@ -253,6 +279,16 @@
 .alert-mini-card {
   display: grid;
   gap: 6px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 10px;
+  background: transparent;
+}
+
+.alert-mini-card:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .alert-config-grid,
@@ -298,11 +334,16 @@
 
 .alert-rule-metric-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1);
 }
 
 .alert-rule-group {
   display: grid;
   gap: 14px;
+  background: transparent;
 }
 
 .alert-rule-group-head,
@@ -322,6 +363,7 @@
 .alert-rule-card {
   display: grid;
   gap: 14px;
+  background: var(--surface-1);
 }
 
 .warn-text {
@@ -333,6 +375,11 @@
   .alert-kpi-grid,
   .alert-rule-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .alert-kpi-card:nth-child(2n),
+  .alert-rule-metric:nth-child(2n) {
+    border-right: none;
   }
 }
 
@@ -354,6 +401,18 @@
   .alert-kpi-grid,
   .alert-rule-metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .alert-kpi-card,
+  .alert-rule-metric {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+  }
+
+  .alert-kpi-card:last-child,
+  .alert-rule-metric:last-child {
+    border-bottom: none;
   }
 
   .alert-header-side {

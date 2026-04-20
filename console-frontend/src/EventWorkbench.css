@@ -62,6 +62,10 @@
 .event-kpi-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-1);
 }
 
 .event-kpi-card,
@@ -73,7 +77,7 @@
 .event-recommend-item,
 .event-list-block {
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--panel);
   padding: 16px;
 }
@@ -81,6 +85,14 @@
 .event-kpi-card {
   display: grid;
   gap: 8px;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.event-kpi-card:last-child {
+  border-right: none;
 }
 
 .event-kpi-card span,
@@ -185,8 +197,8 @@
   gap: 4px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 10px;
+  background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -200,8 +212,8 @@
 
 .event-tab-button.active {
   border-color: var(--accent);
-  background: linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(34, 211, 238, 0.08));
-  box-shadow: var(--card-glow);
+  background: var(--surface-2);
+  box-shadow: none;
 }
 
 .event-tab-button strong {
@@ -230,6 +242,7 @@
 .event-list-block {
   display: grid;
   gap: 12px;
+  background: transparent;
 }
 
 .event-list-block h3 {
@@ -240,6 +253,16 @@
 .event-recommend-item {
   display: grid;
   gap: 6px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0 10px;
+  background: transparent;
+}
+
+.event-recommend-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .event-recommend-item span {
@@ -273,6 +296,10 @@
   .event-action-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .event-kpi-card:nth-child(2n) {
+    border-right: none;
+  }
 }
 
 @media (max-width: 1120px) {
@@ -290,6 +317,15 @@
   .event-kpi-grid,
   .event-action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .event-kpi-card {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .event-kpi-card:last-child {
+    border-bottom: none;
   }
 
   .event-header-actions .btn,
