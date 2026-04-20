@@ -82,38 +82,38 @@ const resolveRegistryMeta = (id: string): NavMeta => {
 
 const resolveOverviewMeta = (id: string): NavMeta => {
   switch (id) {
-    case "overview-summary":
-      return { title: "值班入口", desc: "风险、优先队列与当班判断", badge: "入口" };
-    case "overview-timeline":
-      return { title: "优先队列", desc: "当前先处理什么", badge: "队列" };
-    case "overview-runtime":
-      return { title: "系统热点", desc: "系统对象与闭环主线", badge: "热点" };
+    case "overview-header":
+      return { title: "首页摘要", desc: "风险、动作和总览指标", badge: "摘要" };
+    case "overview-incidents":
+      return { title: "事件队列", desc: "当前优先处理的事件列表", badge: "事件" };
+    case "overview-systems":
+      return { title: "系统热点", desc: "按系统对象收敛当前风险面", badge: "系统" };
     default:
-      return { title: "补充上下文", desc: "观察与备注", badge: "上下文" };
+      return { title: "支撑动作", desc: "动作积压与闭环主线状态", badge: "动作" };
   }
 };
 
 const resolveEventMeta = (id: string): NavMeta => {
   switch (id) {
-    case "event-summary":
-      return { title: "事件概览", desc: "事件标题、级别和责任人", badge: "概览" };
-    case "event-timeline":
-      return { title: "事件队列", desc: "切换事件与时间线", badge: "队列" };
+    case "event-header":
+      return { title: "事件摘要", desc: "当前事件级别、系统与责任人", badge: "摘要" };
+    case "event-context":
+      return { title: "事件队列", desc: "左侧切换事件并查看时间线", badge: "队列" };
     case "event-analysis":
-      return { title: "诊断面", desc: "证据、判断与影响面", badge: "诊断" };
+      return { title: "事件分析", desc: "概览、证据和复盘内容", badge: "分析" };
     default:
-      return { title: "动作面", desc: "任务、SOP 和复盘", badge: "动作" };
+      return { title: "动作执行", desc: "负责人、推荐动作和关联任务", badge: "动作" };
   }
 };
 
 const resolveRegistryCatalogMeta = (id: string): NavMeta => {
   switch (id) {
-    case "registry-catalog-overview":
-      return { title: "系统总览", desc: "台账摘要与设计定位", badge: "总览" };
-    case "registry-catalog-list":
-      return { title: "系统目录", desc: "筛选并进入单系统详情", badge: "目录" };
+    case "registry-header":
+      return { title: "台账摘要", desc: "系统、环境、服务和热点统计", badge: "摘要" };
+    case "registry-directory":
+      return { title: "系统目录", desc: "用表格筛选和定位系统对象", badge: "目录" };
     default:
-      return { title: "系统详情", desc: "服务、事件、SOP 与责任", badge: "详情" };
+      return { title: "系统详情", desc: "页签化查看服务、事件和 Runbook", badge: "详情" };
   }
 };
 
@@ -175,10 +175,10 @@ export function ConsoleSidebar({
           <div className="brand-logo-mark">GWF</div>
           <div className="brand-logo-sub">Go Watch File</div>
         </div>
-        <div className="sidebar-brand-copy">
-          <strong>统一运维工作台</strong>
-          <span>更像正常 Web 后台的左侧导航，先把主线看清楚。</span>
-        </div>
+      <div className="sidebar-brand-copy">
+        <strong>统一运维工作台</strong>
+        <span>先收住主线信息结构，再让接入、知识和执行围绕事件闭环服务。</span>
+      </div>
       </div>
 
       <div className="sidebar-summary">

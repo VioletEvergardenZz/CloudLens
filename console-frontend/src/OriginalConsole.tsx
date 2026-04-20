@@ -88,8 +88,8 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip,
 
 const SECTION_IDS = ["overview", "config", "directory", "files", "tail", "failures", "monitor"];
 const SYSTEM_SECTION_IDS = ["system-overview", "system-resources", "system-volumes", "system-processes", "system-process-detail"];
-const OVERVIEW_SECTION_IDS = ["overview-summary", "overview-timeline", "overview-runtime", "overview-actions"];
-const EVENT_SECTION_IDS = ["event-summary", "event-timeline", "event-analysis", "event-actions"];
+const OVERVIEW_SECTION_IDS = ["overview-header", "overview-incidents", "overview-systems", "overview-actions"];
+const EVENT_SECTION_IDS = ["event-header", "event-context", "event-analysis", "event-actions"];
 const REGISTRY_SECTION_IDS = [
   "registry-overview",
   "registry-probe",
@@ -99,7 +99,7 @@ const REGISTRY_SECTION_IDS = [
   "registry-next",
   "registry-raw",
 ];
-const REGISTRY_CATALOG_SECTION_IDS = ["registry-catalog-overview", "registry-catalog-list", "registry-catalog-detail"];
+const REGISTRY_CATALOG_SECTION_IDS = ["registry-header", "registry-directory", "registry-detail"];
 const UPLOAD_PAGE_SIZE = 5;
 const FILE_PAGE_SIZE = 10;
 const LOG_POLL_MS = 2000;

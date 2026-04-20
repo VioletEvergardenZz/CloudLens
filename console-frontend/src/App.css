@@ -1392,6 +1392,11 @@
   font-size: 14px;
 }
 
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .table th,
 .table td {
   text-align: left;
