@@ -1700,7 +1700,6 @@ export function CloudResourceConsole() {
               <td><Utilization value={server.disk} /></td>
               <td className="monitor-cell" title={`${agentStatusLabels[server.agentStatus]} / ${server.lastSeen}`}>
                 <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
-                <span>{server.lastSeen}</span>
               </td>
             </tr>
           );
