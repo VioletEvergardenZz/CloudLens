@@ -89,6 +89,9 @@ func HasDockerLogSource(raw string) bool {
 
 // AlertSourceMirrorRoot 返回容器日志镜像落盘目录。
 func AlertSourceMirrorRoot() string {
+	if env := strings.TrimSpace(os.Getenv("ALERT_SOURCE_MIRROR_ROOT")); env != "" {
+		return filepath.Clean(env)
+	}
 	cwd, err := os.Getwd()
 	if err != nil || strings.TrimSpace(cwd) == "" {
 		return filepath.Clean(defaultAlertMirrorRoot)

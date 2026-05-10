@@ -46,6 +46,10 @@ const (
 	defaultUploadResumableRoutines          = 1
 	defaultUploadResumableThreshold         = 10 * 1024 * 1024
 	defaultUploadResumableCheckpointDir     = "logs/upload-checkpoints"
+	defaultControlDataDir                   = "data/control"
+	defaultCloudDataDir                     = "data/cloud"
+	defaultKBDataDir                        = "data/kb"
+	defaultAlertSourceMirrorRoot            = "logs/alert-sources"
 	uploadResumableMinPartSize              = 100 * 1024
 )
 
@@ -58,6 +62,11 @@ var allowedLogLevels = map[string]struct{}{
 
 // LoadConfig 加载配置文件并应用默认值
 func LoadConfig(configFile string) (*models.Config, error) {
+	configBaseDir, err := resolveConfigBaseDir(configFile)
+	if err != nil {
+		return nil, err
+	}
+
 	// 优先加载 .env，让后续 YAML 中的 ${KEY} 可以被解析
 	envCandidates := []string{".env"}
 	if dir := filepath.Dir(configFile); dir != "" && dir != "." {
@@ -88,8 +97,11 @@ func LoadConfig(configFile string) (*models.Config, error) {
 	if err := applyEnvOverrides(&cfg); err != nil {
 		return nil, err
 	}
-	// 最后补默认值并做完整校验，保证启动时配置可执行
+	// 先补默认值，再统一把相对路径锚定到配置文件目录，避免工作目录变化导致 data/logs 落盘位置漂移。
 	applyDefaults(&cfg)
+	if err := applyResolvedPaths(&cfg, configBaseDir); err != nil {
+		return nil, err
+	}
 	if err := ValidateConfig(&cfg); err != nil {
 		return nil, fmt.Errorf("配置验证失败: %w", err)
 	}
@@ -772,4 +784,95 @@ func trimQuotes(val string) (string, bool) {
 		}
 	}
 	return val, false
+}
+
+func resolveConfigBaseDir(configFile string) (string, error) {
+	cleaned := strings.TrimSpace(configFile)
+	if cleaned == "" {
+		return os.Getwd()
+	}
+	absPath, err := filepath.Abs(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("解析配置文件路径失败: %w", err)
+	}
+	return filepath.Dir(absPath), nil
+}
+
+func applyResolvedPaths(cfg *models.Config, baseDir string) error {
+	if cfg == nil {
+		return nil
+	}
+	baseDir = strings.TrimSpace(baseDir)
+	if baseDir == "" {
+		return nil
+	}
+
+	if err := os.Setenv("CLOUDLENS_RUNTIME_ROOT", baseDir); err != nil {
+		return fmt.Errorf("设置 CLOUDLENS_RUNTIME_ROOT 失败: %w", err)
+	}
+	if err := setResolvedPathEnv("CONTROL_DATA_DIR", baseDir, defaultControlDataDir); err != nil {
+		return err
+	}
+	if err := setResolvedPathEnv("CLOUD_DATA_DIR", baseDir, defaultCloudDataDir); err != nil {
+		return err
+	}
+	if err := setResolvedPathEnv("KB_DATA_DIR", baseDir, defaultKBDataDir); err != nil {
+		return err
+	}
+	if err := setResolvedPathEnv("ALERT_SOURCE_MIRROR_ROOT", baseDir, defaultAlertSourceMirrorRoot); err != nil {
+		return err
+	}
+
+	cfg.LogFile = resolvePathAgainstBaseDir(baseDir, cfg.LogFile)
+	cfg.UploadQueuePersistFile = resolvePathAgainstBaseDir(baseDir, cfg.UploadQueuePersistFile)
+	cfg.UploadResumableCheckpointDir = resolvePathAgainstBaseDir(baseDir, cfg.UploadResumableCheckpointDir)
+	cfg.AlertRulesFile = resolvePathAgainstBaseDir(baseDir, cfg.AlertRulesFile)
+	cfg.AlertLogPaths = resolveDelimitedPathsAgainstBaseDir(baseDir, cfg.AlertLogPaths)
+	return nil
+}
+
+func setResolvedPathEnv(key, baseDir, defaultValue string) error {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		raw = defaultValue
+	}
+	resolved := resolvePathAgainstBaseDir(baseDir, raw)
+	if err := os.Setenv(key, resolved); err != nil {
+		return fmt.Errorf("设置 %s 失败: %w", key, err)
+	}
+	return nil
+}
+
+func resolvePathAgainstBaseDir(baseDir, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Clean(filepath.Join(baseDir, trimmed))
+}
+
+func resolveDelimitedPathsAgainstBaseDir(baseDir, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	resolved := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(value), "://") {
+			resolved = append(resolved, value)
+			continue
+		}
+		resolved = append(resolved, resolvePathAgainstBaseDir(baseDir, value))
+	}
+	return strings.Join(resolved, ",")
 }

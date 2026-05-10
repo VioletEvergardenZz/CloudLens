@@ -64,6 +64,11 @@ type articleChunk struct {
 func NewService(dataDir string) (*Service, error) {
 	root := strings.TrimSpace(dataDir)
 	if root == "" {
+		if env := strings.TrimSpace(os.Getenv("KB_DATA_DIR")); env != "" {
+			root = env
+		}
+	}
+	if root == "" {
 		root = defaultDataDir
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {

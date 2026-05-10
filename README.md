@@ -35,6 +35,12 @@ cp .env.example .env
 go run ./cmd -config config.yaml
 ```
 
+如果你当前就在仓库根目录，也可以直接运行：
+
+```bash
+go run ./cloudlens-backend/cmd -config ./cloudlens-backend/config.yaml
+```
+
 ### 前端
 
 ```bash

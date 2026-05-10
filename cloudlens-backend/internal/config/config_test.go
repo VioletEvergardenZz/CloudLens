@@ -418,8 +418,70 @@ upload_queue_persist_file: ""
 	if !config.UploadQueuePersistEnabled {
 		t.Fatalf("UploadQueuePersistEnabled 应该为 true")
 	}
-	if config.UploadQueuePersistFile != "logs/upload-queue.json" {
-		t.Fatalf("UploadQueuePersistFile 默认值期望 logs/upload-queue.json, 实际 %s", config.UploadQueuePersistFile)
+	wantPersistPath := filepath.Join(filepath.Dir(configPath), "logs", "upload-queue.json")
+	if config.UploadQueuePersistFile != wantPersistPath {
+		t.Fatalf("UploadQueuePersistFile 默认值期望 %s, 实际 %s", wantPersistPath, config.UploadQueuePersistFile)
+	}
+}
+
+func TestLoadConfigResolvesRuntimePathsRelativeToConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	watchDir := filepath.ToSlash(t.TempDir())
+	configPath := filepath.Join(configDir, "config.yaml")
+	cfgContent := fmt.Sprintf(`
+watch_dir: "%s"
+file_ext: ".log"
+bucket: "test-bucket"
+ak: "test-ak"
+sk: "test-sk"
+endpoint: "https://test-endpoint.com"
+region: "test-region"
+log_file: "logs/test.log"
+upload_queue_persist_enabled: true
+upload_queue_persist_file: "logs/queue.json"
+upload_resumable_checkpoint_dir: "logs/checkpoints"
+alert_log_paths: "logs/app.log,docker://container/demo"
+`, watchDir)
+	if err := os.WriteFile(configPath, []byte(cfgContent), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	t.Setenv("CONTROL_DATA_DIR", "data/control")
+	t.Setenv("CLOUD_DATA_DIR", "data/cloud")
+	t.Setenv("KB_DATA_DIR", "data/kb")
+	t.Setenv("ALERT_SOURCE_MIRROR_ROOT", "logs/alert-sources")
+
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("load config failed: %v", err)
+	}
+
+	if got, want := config.LogFile, filepath.Join(configDir, "logs", "test.log"); got != want {
+		t.Fatalf("LogFile 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := config.UploadQueuePersistFile, filepath.Join(configDir, "logs", "queue.json"); got != want {
+		t.Fatalf("UploadQueuePersistFile 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := config.UploadResumableCheckpointDir, filepath.Join(configDir, "logs", "checkpoints"); got != want {
+		t.Fatalf("UploadResumableCheckpointDir 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := config.AlertLogPaths, filepath.Join(configDir, "logs", "app.log")+",docker://container/demo"; got != want {
+		t.Fatalf("AlertLogPaths 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := os.Getenv("CONTROL_DATA_DIR"), filepath.Join(configDir, "data", "control"); got != want {
+		t.Fatalf("CONTROL_DATA_DIR 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := os.Getenv("CLOUD_DATA_DIR"), filepath.Join(configDir, "data", "cloud"); got != want {
+		t.Fatalf("CLOUD_DATA_DIR 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := os.Getenv("KB_DATA_DIR"), filepath.Join(configDir, "data", "kb"); got != want {
+		t.Fatalf("KB_DATA_DIR 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := os.Getenv("ALERT_SOURCE_MIRROR_ROOT"), filepath.Join(configDir, "logs", "alert-sources"); got != want {
+		t.Fatalf("ALERT_SOURCE_MIRROR_ROOT 期望 %s, 实际 %s", want, got)
+	}
+	if got, want := os.Getenv("CLOUDLENS_RUNTIME_ROOT"), configDir; got != want {
+		t.Fatalf("CLOUDLENS_RUNTIME_ROOT 期望 %s, 实际 %s", want, got)
 	}
 }
 
