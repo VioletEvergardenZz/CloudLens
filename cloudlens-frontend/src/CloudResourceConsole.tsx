@@ -219,7 +219,9 @@ type MonitorMetric = {
   label: string;
   unit: string;
   value: string;
-  metricName: string;
+  range: string;
+  average: string;
+  sampledAt: string;
   points: number;
   status: "ok" | "empty" | "error";
   note: string;
@@ -735,18 +737,6 @@ const getAliyunStatus = (status: string): ServerStatus => {
   return "warning";
 };
 
-const latestMetricValue = (points?: AliyunMetricPoint[]) => {
-  if (!points?.length) return 0;
-  const latest = [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
-  return Math.max(0, Math.min(100, Math.round(latest?.value ?? 0)));
-};
-
-const latestRawMetricValue = (points?: AliyunMetricPoint[]) => {
-  if (!points?.length) return 0;
-  const latest = [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
-  return latest?.value ?? 0;
-};
-
 const formatUptimeFromCreatedAt = (createdAt: string, status: string) => {
   if (status.trim().toLowerCase() !== "running") return "--";
   const created = new Date(createdAt);
@@ -766,6 +756,8 @@ const formatMemorySpec = (memoryMb: number) => {
   if (memoryMb >= 1024) return `${Math.round(memoryMb / 1024)}G`;
   return `${memoryMb}M`;
 };
+
+const formatPercentValue = (value: number) => `${value.toFixed(2)}%`;
 
 const resolvePublicIp = (instance: AliyunInstance): Pick<CloudServer, "publicIp" | "publicIpType" | "publicIpId"> => {
   const eipAddress = instance.eipAddress?.trim();
@@ -826,21 +818,20 @@ const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
 const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overview?: AliyunOverviewResponse): CloudServer => {
   const cpuSpec = instance.cpu > 0 ? `${instance.cpu}C` : "CPU未知";
   const serverStatus = getAliyunStatus(instance.status);
-  const cpuUsage = latestMetricValue(overview?.metrics?.cpu?.points);
-  const memoryUsage = latestMetricValue(overview?.metrics?.memory?.points);
-  const diskUsage = latestMetricValue(overview?.metrics?.disk?.points);
-  const load1m = latestRawMetricValue(overview?.metrics?.load1m?.points);
   const publicIpInfo = resolvePublicIp(instance);
-  const cloudMonitorStatus: AgentStatus = serverStatus === "offline"
-    ? "offline"
-    : overview?.availableMetricCount
-      ? "online"
-      : overview?.status === "metric_error" || overview?.error
-        ? "stale"
-        : "missing";
-  const lastSeen = serverStatus === "offline"
-    ? "实例已离线，探针不可用"
-    : overview?.message || (overview?.availableMetricCount ? "云监控已同步" : "等待云监控数据");
+  const cpuPoint = latestPoint(overview?.metrics?.cpu?.points);
+  const memoryPoint = latestPoint(overview?.metrics?.memory?.points);
+  const diskPoint = latestPoint(overview?.metrics?.disk?.points);
+  const loadPoint = latestPoint(overview?.metrics?.load1m?.points);
+  const freshness = resolveOverviewFreshness(overview);
+  const cloudMonitorStatus: AgentStatus =
+    serverStatus === "offline"
+      ? "offline"
+      : freshness.status;
+  const lastSeen =
+    serverStatus === "offline"
+      ? "实例已离线，探针不可用"
+      : freshness.message || overview?.message || (overview?.availableMetricCount ? "云监控已同步" : "等待云监控数据");
   return {
     id: `${account.id}:${instance.id}`,
     accountId: account.id,
@@ -856,10 +847,10 @@ const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overvi
     spec: `${cpuSpec}${formatMemorySpec(instance.memoryMb)}`,
     status: serverStatus,
     agentStatus: cloudMonitorStatus,
-    cpu: cpuUsage,
-    memory: memoryUsage,
-    disk: diskUsage,
-    load: load1m > 0 ? load1m.toFixed(2) : "--",
+    cpu: clampPercentMetric(cpuPoint?.value),
+    memory: clampPercentMetric(memoryPoint?.value),
+    disk: clampPercentMetric(diskPoint?.value),
+    load: loadPoint ? loadPoint.value.toFixed(2) : "--",
     uptime: formatUptimeFromCreatedAt(instance.createdAt, instance.status),
     lastSeen,
     alerts: 0,
@@ -900,7 +891,7 @@ const formatRateValue = (value: number, unit: "bit/s" | "B/s") => {
 
 const formatMetricValue = (key: MonitorMetricKey, value: number) => {
   if (key === "cpu" || key === "memory" || key === "disk") {
-    return `${value.toFixed(2)}%`;
+    return formatPercentValue(value);
   }
   if (key === "load1m") return value.toFixed(2);
   if (key === "diskReadBps" || key === "diskWriteBps") return formatRateValue(value, "B/s");
@@ -909,10 +900,38 @@ const formatMetricValue = (key: MonitorMetricKey, value: number) => {
 
 const latestPoint = (points?: AliyunMetricPoint[]) => {
   if (!points?.length) return undefined;
-  return [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
+  return points.at(-1);
 };
 
 const hasMetricPoint = (series?: AliyunMetricSeries) => Boolean(latestPoint(series?.points));
+
+const clampPercentMetric = (value?: number) => {
+  if (typeof value !== "number" || Number.isNaN(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+};
+
+const parseMetricPeriodSeconds = (period?: string) => {
+  const parsed = Number.parseInt((period ?? "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const summarizeMetricPoints = (points?: AliyunMetricPoint[]) => {
+  if (!points?.length) return undefined;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let sum = 0;
+  for (const point of points) {
+    min = Math.min(min, point.value);
+    max = Math.max(max, point.value);
+    sum += point.value;
+  }
+  return {
+    latest: points.at(-1),
+    min,
+    max,
+    average: sum / points.length,
+  };
+};
 
 const mergeServerRowsWithPrevious = (
   freshRows: CloudServer[],
@@ -1002,6 +1021,70 @@ const formatMetricTime = (timestamp?: number) => {
   return date.toLocaleString("zh-CN", { hour12: false });
 };
 
+const formatAgeText = (ageMs: number) => {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return "";
+  const totalSeconds = Math.floor(ageMs / 1000);
+  if (totalSeconds < 60) return `${Math.max(1, totalSeconds)} 秒`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes} 分钟`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`;
+};
+
+const latestMetricSnapshot = (overview?: AliyunOverviewResponse) => {
+  let latestTimestamp = 0;
+  let maxPeriodSeconds = 0;
+  let pointCount = 0;
+  for (const series of Object.values(overview?.metrics ?? {})) {
+    const point = latestPoint(series?.points);
+    if (point?.timestamp && point.timestamp > latestTimestamp) {
+      latestTimestamp = point.timestamp;
+    }
+    maxPeriodSeconds = Math.max(maxPeriodSeconds, parseMetricPeriodSeconds(series?.period));
+    pointCount += series?.points?.length ?? 0;
+  }
+  return {
+    latestTimestamp,
+    periodSeconds: maxPeriodSeconds,
+    pointCount,
+  };
+};
+
+const resolveOverviewFreshness = (overview?: AliyunOverviewResponse): { status: AgentStatus; message: string } => {
+  const snapshot = latestMetricSnapshot(overview);
+  if (!snapshot.latestTimestamp) {
+    if (overview?.status === "metric_error" || overview?.error) {
+      return { status: "stale", message: overview.message || overview.error || "监控接口异常，暂未拿到采样值" };
+    }
+    return {
+      status: "missing",
+      message: overview?.message || "当前未拿到监控采样，请检查云监控插件、地域和权限",
+    };
+  }
+  const now = Date.now();
+  const ageMs = Math.max(0, now - snapshot.latestTimestamp);
+  const ageText = formatAgeText(ageMs);
+  const sampledAt = formatMetricTime(snapshot.latestTimestamp);
+  const thresholdMs = Math.max(snapshot.periodSeconds * 3 * 1000, 180_000);
+  if (overview?.message?.includes("沿用上一轮监控值")) {
+    return {
+      status: "stale",
+      message: `本轮未返回新采样，当前展示为 ${sampledAt}${ageText ? `（${ageText}前）` : ""}`,
+    };
+  }
+  if (ageMs > thresholdMs) {
+    return {
+      status: "stale",
+      message: `最新采样 ${sampledAt}${ageText ? `（${ageText}前，数据偏旧）` : "（数据偏旧）"}`,
+    };
+  }
+  return {
+    status: "online",
+    message: `最新采样 ${sampledAt}${ageText ? `（${ageText}前）` : ""}`,
+  };
+};
+
 const metricSourceLabel = (series?: AliyunMetricSeries) => {
   const namespace = series?.namespace ?? "";
   const metricName = series?.metricName ?? "";
@@ -1019,15 +1102,15 @@ const buildMetricNote = (
   error?: string
 ) => {
   const source = metricSourceLabel(series);
-  const latestTime = formatMetricTime(latest?.timestamp);
   const period = series?.period ? `，周期 ${series.period}s` : "";
+  const metricName = series?.metricName ? ` / ${series.metricName}` : "";
   if (latest) {
-    return `${source}${period}${latestTime ? `，最新采样 ${latestTime}` : ""}`;
+    return `${source}${metricName}${period}`;
   }
   if (error) return error;
   if (derivedMetricKeys.has(item.key)) return "依赖的入/出方向指标没有同时返回";
   if (pluginMetricKeys.has(item.key)) return "ECS 基础监控不包含该项，需云监控插件或 Agent 上报";
-  if (series) return `${source}${period}，接口返回成功但没有采样点`;
+  if (series) return `${source}${metricName}${period}，接口返回成功但没有采样点`;
   return "阿里云未返回该指标";
 };
 
@@ -1046,12 +1129,15 @@ const buildMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => 
   return monitorMetricMeta.map((item) => {
     const series = metrics[item.key];
     const points = series?.points ?? [];
-    const latest = latestPoint(points);
+    const summary = summarizeMetricPoints(points);
+    const latest = summary?.latest;
     const error = payload?.errors?.[item.key];
     return {
       ...item,
       value: latest ? formatMetricValue(item.key, latest.value) : "--",
-      metricName: series?.metricName ?? "--",
+      range: summary ? `${formatMetricValue(item.key, summary.min)} ~ ${formatMetricValue(item.key, summary.max)}` : "--",
+      average: summary ? formatMetricValue(item.key, summary.average) : "--",
+      sampledAt: formatMetricTime(latest?.timestamp) || "--",
       points: points.length,
       status: latest ? "ok" : error ? "error" : "empty",
       note: buildMetricNote(item, latest, series, error),
@@ -1114,7 +1200,7 @@ function Utilization({ value }: { value: number }) {
   return (
     <span className={`usage usage-${tone}`}>
       <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-      <b>{value}%</b>
+      <b>{formatPercentValue(value)}</b>
     </span>
   );
 }
@@ -1829,6 +1915,11 @@ export function CloudResourceConsole() {
   const renderMonitorPage = () => {
     const overview = overviewByServerId[selectedServer.id];
     const metricRows = buildMonitorRows(overview);
+    const freshness = resolveOverviewFreshness(overview);
+    const snapshot = latestMetricSnapshot(overview);
+    const freshnessSummary = snapshot.latestTimestamp
+      ? `监控窗口最近拿到 ${snapshot.pointCount} 个采样点，${freshness.message}${snapshot.periodSeconds ? `，主采样周期 ${snapshot.periodSeconds}s` : ""}`
+      : freshness.message;
     return (
       <section className="page-main-section">
         <div className="table-panel">{renderServerTable(monitorServers)}</div>
@@ -1837,18 +1928,20 @@ export function CloudResourceConsole() {
             <h3>ECS 监控详情</h3>
             <span>{selectedServer.name} / {selectedServer.instanceId}</span>
           </div>
-          {overview?.message || overview?.error ? (
-            <div className="inline-message">{overview.message || overview.error}</div>
+          {freshnessSummary ? (
+            <div className="inline-message">{freshnessSummary}</div>
           ) : null}
           <table className="data-table">
             <thead>
               <tr>
-	                <th>指标</th>
-	                <th>当前值</th>
-	                <th>指标名</th>
-	                <th>采样点数</th>
-	                <th>状态</th>
-	                <th>说明</th>
+                  <th>指标</th>
+                  <th>当前值</th>
+                  <th>30 分钟范围</th>
+                  <th>均值</th>
+                  <th>最新采样</th>
+                  <th>采样点数</th>
+                  <th>状态</th>
+                  <th>说明</th>
               </tr>
             </thead>
             <tbody>
@@ -1856,11 +1949,13 @@ export function CloudResourceConsole() {
                 <tr key={item.key}>
                   <td>{item.label}</td>
                   <td>{item.value}</td>
-	                  <td>{item.metricName}</td>
-	                  <td>{item.points}</td>
-	                  <td><StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>{item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}</StatusText></td>
-	                  <td>{item.note}</td>
-	                </tr>
+                  <td>{item.range}</td>
+                  <td>{item.average}</td>
+                  <td>{item.sampledAt}</td>
+                  <td>{item.points}</td>
+                  <td><StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>{item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}</StatusText></td>
+                  <td>{item.note}</td>
+                </tr>
               ))}
             </tbody>
           </table>
