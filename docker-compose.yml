@@ -1,34 +1,37 @@
+name: cloudlens
+
 services:
-  gwf-backend:
-    container_name: gwf-backend
-    image: gwf-backend:local
+  cloudlens-backend:
+    container_name: cloudlens-backend
+    image: cloudlens-backend:local
     build:
-      context: ./go-watch-file
+      context: ./cloudlens-backend
     env_file:
       - .env
     volumes:
-      - /opt/gwf:/etc/gwf
-      - /opt/gwf/logs:/app/logs
+      - /opt/cloudlens/config:/etc/cloudlens
+      - /opt/cloudlens/logs:/app/logs
+      - /opt/cloudlens/data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
-      - "${GWF_BACKEND_PORT:-8082}:8080"
+      - "${CLOUDLENS_BACKEND_PORT:-8082}:8080"
     restart: unless-stopped
     networks:
-      - gwf-net
+      - cloudlens-net
 
-  gwf-frontend:
-    container_name: gwf-frontend
-    image: gwf-frontend:local
+  cloudlens-frontend:
+    container_name: cloudlens-frontend
+    image: cloudlens-frontend:local
     build:
-      context: ./console-frontend
+      context: ./cloudlens-frontend
     depends_on:
-      - gwf-backend
+      - cloudlens-backend
     ports:
-      - "${GWF_WEB_PORT:-8081}:80"
+      - "${CLOUDLENS_WEB_PORT:-8081}:80"
     restart: unless-stopped
     networks:
-      - gwf-net
+      - cloudlens-net
 
 networks:
-  gwf-net:
+  cloudlens-net:
     driver: bridge

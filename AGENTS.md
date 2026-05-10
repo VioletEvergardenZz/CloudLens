@@ -1,24 +1,24 @@
-# AGENTS 工作指南（GWF 仓库）
+# AGENTS 工作指南（云镜 CloudLens）
 
 ## 1. 适用范围
-- 本文件适用于仓库根目录 `GWF/` 下的全部代码与文档目录
+- 本文件适用于仓库根目录 `CloudLens/` 下的全部代码与文档目录
 - 如子目录存在更细化的 `AGENTS.md`，以“就近优先”覆盖本文件
 - 未被覆盖的条款继续生效
 
 ## 2. 项目定位与阶段口径
-- 平台定位：面向 SRE/运维的运维事件闭环平台
-- 当前主线：`文件入云 + 告警决策 + AI 分析 + 知识库复用`
-- 闭环目标：把事件发现、诊断、回放与追溯统一到同一套控制台，持续优化 `MTTD/MTTR`
-- 截至 `2026-02-24` 的阶段目标：在不扩张范围前提下，完成可观测、可回归、可追溯的收口
+- 平台定位：面向个人运维和小团队的多云资源监控工具
+- 当前主线：`云账号接入 + 云资源查看 + 主机指标查看`
+- 辅助能力：`告警 + AI + 知识库 + 文件入云`
+- 截至 `2026-05-10` 的阶段目标：先把多云监控主线跑顺，再逐步延伸其他能力
 
 ### 2.1 本阶段范围边界（必须遵守）
-- A 类（必须做）：文件入云与事件输入稳定性、AI 分析与降级、知识库闭环、最小安全能力、测试门禁与文档同步
-- B 类（下一阶段优先）：指标体系标准化、多 Agent 最小控制面深化、统一任务模型、AI 质量治理
-- C 类（当前暂缓）：复杂工作流 DSL、全自动处置全量放开、完整多租户/RBAC/计费体系
+- A 类（必须做）：云账号接入、云资源查询、监控视图、测试门禁与文档同步
+- B 类（下一阶段优先）：第二个云厂商 provider、统一 provider 抽象、告警和知识库联动
+- C 类（当前暂缓）：复杂工作流、完整多租户/RBAC、把文件入云重新做回产品主线
 
 ### 2.2 范围冻结规则
 - 本阶段默认只接 A 类任务
-- 新需求必须映射到至少一个目标：`事件决策效率`、`MTTD/MTTR`、`可观测性`、`安全性`
+- 新需求必须映射到至少一个目标：`资源可见性`、`监控可用性`、`可维护性`、`安全性`
 - 无法量化收益的需求默认延期
 
 ## 3. 协作角色与沟通约束
@@ -51,9 +51,9 @@
 - 关键行为变更后必须同步更新相关文档，避免“代码行为与文档不一致”
 
 ## 7. 仓库结构认知
-- `go-watch-file/`：Go 后端服务、API、监控、告警、知识库与运维脚本
-- `console-frontend/`：控制台前端（React + TS + Vite）
-- `docs/`：总览规划、开发运维、告警与 AI、知识库、指标评估、架构附录
+- `cloudlens-backend/`：Go 后端服务、云资源接口、告警、知识库与运维脚本
+- `cloudlens-frontend/`：控制台前端（React + TS + Vite）
+- `docs/`：精简后的主线文档
 - `reports/`：阶段回放与复盘产物
 - `legacy/`：历史方案归档
 
@@ -67,8 +67,8 @@
 7. 输出结果：说明变更点、验证结果、剩余风险与下一步建议
 
 ## 9. 验收门禁（DoD）
-- 后端：`cd go-watch-file && go test ./... -count=1`
-- 前端：`cd console-frontend && npm run build`
+- 后端：`cd cloudlens-backend && go test ./... -count=1`
+- 前端：`cd cloudlens-frontend && npm run build`
 - macOS + nvm 场景：若 `node`/`npm` 命令不存在，先执行 `source /etc/profile` 再运行前端命令
 - 执行前端门禁前建议先确认：`node -v && npm -v`
 - 文档：与接口/配置实际行为一致
@@ -107,11 +107,11 @@
 - 后续动作：可选下一步与风险提示
 
 ## 15. 常用命令速查
-- 后端测试：`cd go-watch-file && go test ./... -count=1`
-- 前端构建：`cd console-frontend && npm run build`
+- 后端测试：`cd cloudlens-backend && go test ./... -count=1`
+- 前端构建：`cd cloudlens-frontend && npm run build`
 - macOS（nvm）前置：`source /etc/profile && node -v && npm -v`
-- 指标检查：`cd go-watch-file && powershell -ExecutionPolicy Bypass -File scripts/ops/check-metrics.ps1 -BaseUrl http://localhost:8082`
-- 阶段复盘：`cd go-watch-file && powershell -ExecutionPolicy Bypass -File scripts/ops/stage-recap.ps1 -BaseUrl http://localhost:8082 -AutoPrime -AIPathsFile ../reports/ai-replay-paths-prime.txt -OutputFile ../reports/stage-recap-result.json`
+- 指标检查：`cd cloudlens-backend && powershell -ExecutionPolicy Bypass -File scripts/ops/check-metrics.ps1 -BaseUrl http://localhost:8082`
+- 阶段复盘：`cd cloudlens-backend && powershell -ExecutionPolicy Bypass -File scripts/ops/stage-recap.ps1 -BaseUrl http://localhost:8082 -AutoPrime -AIPathsFile ../reports/ai-replay-paths-prime.txt -OutputFile ../reports/stage-recap-result.json`
 
 ---
 

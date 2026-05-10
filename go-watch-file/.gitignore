@@ -1,7 +1,0 @@
-# 本文件用于忽略本地运行与敏感配置
-.env
-config.runtime.yaml
-alert-rules.yaml
-logs/
-file-watch
-bin/
