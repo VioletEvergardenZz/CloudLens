@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"file-watch/internal/alert"
-	"file-watch/internal/logger"
-	"file-watch/internal/metrics"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/metrics"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 )
 
 const (

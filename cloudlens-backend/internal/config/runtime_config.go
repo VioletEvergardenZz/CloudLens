@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 type runtimeConfig struct {

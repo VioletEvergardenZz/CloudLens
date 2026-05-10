@@ -20,9 +20,9 @@ import (
 
 	sdk "github.com/aliyun/aliyun-oss-go-sdk/oss"
 
-	"file-watch/internal/logger"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 )
 
 // Client 封装 OSS SDK 客户端及相关配置

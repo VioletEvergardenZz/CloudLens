@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"file-watch/internal/match"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/match"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 )
 
 // “内存中保留数量的上限”常量，用来限制运行态数据列表的长度

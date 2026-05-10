@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"file-watch/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
 )
 
 // Robot 钉钉机器人

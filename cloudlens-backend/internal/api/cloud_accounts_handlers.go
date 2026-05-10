@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	aliyuncloud "file-watch/internal/cloud/aliyun"
+	aliyuncloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/aliyun"
 )
 
 type cloudAccountCheck struct {

@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"file-watch/internal/logger"
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 // WorkerPool 上传工作池结构

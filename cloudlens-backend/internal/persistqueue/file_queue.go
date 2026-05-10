@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"file-watch/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
 )
 
 type fileQueueStore struct {

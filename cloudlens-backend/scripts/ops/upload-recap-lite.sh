@@ -56,8 +56,8 @@ failure_reasons_json() {
   local file="$1"
   local lines
   lines="$(
-    grep -E '^gwf_upload_failure_reason_total\{' "$file" 2>/dev/null \
-      | sed -E 's/^gwf_upload_failure_reason_total\{.*reason="([^"]+)".*\}[[:space:]]+([0-9.eE+-]+).*$/\1\t\2/' \
+    grep -E '^cloudlens_upload_failure_reason_total\{' "$file" 2>/dev/null \
+      | sed -E 's/^cloudlens_upload_failure_reason_total\{.*reason="([^"]+)".*\}[[:space:]]+([0-9.eE+-]+).*$/\1\t\2/' \
       || true
   )"
 
@@ -91,15 +91,15 @@ collect_snapshot() {
     --arg collectedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg metricsFile "$metrics_file" \
     --arg healthFile "$health_file" \
-    --argjson fileEventsTotal "$(metric_value "$metrics_file" "gwf_file_events_total")" \
-    --argjson queueLength "$(metric_value "$metrics_file" "gwf_upload_queue_length")" \
-    --argjson inFlight "$(metric_value "$metrics_file" "gwf_upload_inflight")" \
-    --argjson workers "$(metric_value "$metrics_file" "gwf_upload_workers")" \
-    --argjson queueFullTotal "$(metric_value "$metrics_file" "gwf_upload_queue_full_total")" \
-    --argjson queueShedTotal "$(metric_value "$metrics_file" "gwf_upload_queue_shed_total")" \
-    --argjson retryTotal "$(metric_value "$metrics_file" "gwf_upload_retry_total")" \
-    --argjson uploadSuccessTotal "$(metric_value "$metrics_file" "gwf_upload_success_total")" \
-    --argjson uploadFailureTotal "$(metric_value "$metrics_file" "gwf_upload_failure_total")" \
+    --argjson fileEventsTotal "$(metric_value "$metrics_file" "cloudlens_file_events_total")" \
+    --argjson queueLength "$(metric_value "$metrics_file" "cloudlens_upload_queue_length")" \
+    --argjson inFlight "$(metric_value "$metrics_file" "cloudlens_upload_inflight")" \
+    --argjson workers "$(metric_value "$metrics_file" "cloudlens_upload_workers")" \
+    --argjson queueFullTotal "$(metric_value "$metrics_file" "cloudlens_upload_queue_full_total")" \
+    --argjson queueShedTotal "$(metric_value "$metrics_file" "cloudlens_upload_queue_shed_total")" \
+    --argjson retryTotal "$(metric_value "$metrics_file" "cloudlens_upload_retry_total")" \
+    --argjson uploadSuccessTotal "$(metric_value "$metrics_file" "cloudlens_upload_success_total")" \
+    --argjson uploadFailureTotal "$(metric_value "$metrics_file" "cloudlens_upload_failure_total")" \
     --argjson failureReasons "$failure_reasons" \
     --slurpfile health "$health_file" \
     '{

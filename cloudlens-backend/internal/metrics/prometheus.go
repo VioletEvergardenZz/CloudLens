@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 // Collector 聚合运行期指标，并以 Prometheus 文本格式输出。
@@ -321,32 +321,32 @@ func (c *Collector) RenderPrometheus() string {
 	builder := strings.Builder{}
 	builder.Grow(4096)
 
-	writeMetricHeader(&builder, "gwf_file_events_total", "counter", "Total file enqueue events observed by the watcher.")
-	writeCounter(&builder, "gwf_file_events_total", c.fileEventsTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_file_events_total", "counter", "Total file enqueue events observed by the watcher.")
+	writeCounter(&builder, "cloudlens_file_events_total", c.fileEventsTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_queue_length", "gauge", "Current upload queue length.")
-	writeGaugeInt(&builder, "gwf_upload_queue_length", c.queueLength.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_queue_length", "gauge", "Current upload queue length.")
+	writeGaugeInt(&builder, "cloudlens_upload_queue_length", c.queueLength.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_inflight", "gauge", "Current in-flight upload tasks.")
-	writeGaugeInt(&builder, "gwf_upload_inflight", c.inFlight.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_inflight", "gauge", "Current in-flight upload tasks.")
+	writeGaugeInt(&builder, "cloudlens_upload_inflight", c.inFlight.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_workers", "gauge", "Current upload workers.")
-	writeGaugeInt(&builder, "gwf_upload_workers", c.workers.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_workers", "gauge", "Current upload workers.")
+	writeGaugeInt(&builder, "cloudlens_upload_workers", c.workers.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_queue_full_total", "counter", "Total enqueue failures due to full queue.")
-	writeCounter(&builder, "gwf_upload_queue_full_total", c.queueFullTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_queue_full_total", "counter", "Total enqueue failures due to full queue.")
+	writeCounter(&builder, "cloudlens_upload_queue_full_total", c.queueFullTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_queue_shed_total", "counter", "Total files rejected by queue saturation circuit breaker.")
-	writeCounter(&builder, "gwf_upload_queue_shed_total", c.queueShedTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_queue_shed_total", "counter", "Total files rejected by queue saturation circuit breaker.")
+	writeCounter(&builder, "cloudlens_upload_queue_shed_total", c.queueShedTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_retry_total", "counter", "Total upload retry attempts.")
-	writeCounter(&builder, "gwf_upload_retry_total", c.uploadRetryTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_retry_total", "counter", "Total upload retry attempts.")
+	writeCounter(&builder, "cloudlens_upload_retry_total", c.uploadRetryTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_success_total", "counter", "Total successful uploads.")
-	writeCounter(&builder, "gwf_upload_success_total", c.uploadSuccessTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_success_total", "counter", "Total successful uploads.")
+	writeCounter(&builder, "cloudlens_upload_success_total", c.uploadSuccessTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_upload_failure_total", "counter", "Total failed uploads.")
-	writeCounter(&builder, "gwf_upload_failure_total", c.uploadFailureTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_upload_failure_total", "counter", "Total failed uploads.")
+	writeCounter(&builder, "cloudlens_upload_failure_total", c.uploadFailureTotal.Load(), nil)
 
 	uploadFailureByReason := make(map[string]uint64)
 	aiByOutcome := make(map[string]uint64)
@@ -371,18 +371,18 @@ func (c *Collector) RenderPrometheus() string {
 	controlTaskDurationCopy = cloneHistogram(c.controlTaskDurationSec)
 	c.mu.RUnlock()
 
-	writeMetricHeader(&builder, "gwf_upload_failure_reason_total", "counter", "Upload failures grouped by reason.")
+	writeMetricHeader(&builder, "cloudlens_upload_failure_reason_total", "counter", "Upload failures grouped by reason.")
 	reasons := sortedStringKeysFromUintMap(uploadFailureByReason)
 	for _, reason := range reasons {
-		writeCounter(&builder, "gwf_upload_failure_reason_total", uploadFailureByReason[reason], map[string]string{
+		writeCounter(&builder, "cloudlens_upload_failure_reason_total", uploadFailureByReason[reason], map[string]string{
 			"reason": reason,
 		})
 	}
 
-	writeMetricHeader(&builder, "gwf_upload_duration_seconds", "histogram", "Upload latency distribution in seconds.")
-	uploadDurationCopy.writePrometheus(&builder, "gwf_upload_duration_seconds", nil)
+	writeMetricHeader(&builder, "cloudlens_upload_duration_seconds", "histogram", "Upload latency distribution in seconds.")
+	uploadDurationCopy.writePrometheus(&builder, "cloudlens_upload_duration_seconds", nil)
 
-	writeMetricHeader(&builder, "gwf_ai_log_summary_total", "counter", "Total AI log summary requests grouped by outcome.")
+	writeMetricHeader(&builder, "cloudlens_ai_log_summary_total", "counter", "Total AI log summary requests grouped by outcome.")
 	// 始终输出 success/degraded 两个 outcome，避免零流量时缺失时序导致巡检误报
 	if _, ok := aiByOutcome["success"]; !ok {
 		aiByOutcome["success"] = 0
@@ -392,42 +392,42 @@ func (c *Collector) RenderPrometheus() string {
 	}
 	outcomes := sortedStringKeysFromUintMap(aiByOutcome)
 	for _, outcome := range outcomes {
-		writeCounter(&builder, "gwf_ai_log_summary_total", aiByOutcome[outcome], map[string]string{
+		writeCounter(&builder, "cloudlens_ai_log_summary_total", aiByOutcome[outcome], map[string]string{
 			"outcome": outcome,
 		})
 	}
 
-	writeMetricHeader(&builder, "gwf_ai_log_summary_retry_total", "counter", "Total retry attempts for AI log summary.")
-	writeCounter(&builder, "gwf_ai_log_summary_retry_total", c.aiRetryTotal.Load(), nil)
+	writeMetricHeader(&builder, "cloudlens_ai_log_summary_retry_total", "counter", "Total retry attempts for AI log summary.")
+	writeCounter(&builder, "cloudlens_ai_log_summary_retry_total", c.aiRetryTotal.Load(), nil)
 
-	writeMetricHeader(&builder, "gwf_ai_log_summary_duration_seconds", "histogram", "AI log summary latency distribution in seconds.")
-	aiDurationCopy.writePrometheus(&builder, "gwf_ai_log_summary_duration_seconds", nil)
+	writeMetricHeader(&builder, "cloudlens_ai_log_summary_duration_seconds", "histogram", "AI log summary latency distribution in seconds.")
+	aiDurationCopy.writePrometheus(&builder, "cloudlens_ai_log_summary_duration_seconds", nil)
 
 	kbSearchTotal := c.kbSearchTotal.Load()
 	kbSearchHitTotal := c.kbSearchHitTotal.Load()
 	kbAskTotal := c.kbAskTotal.Load()
 	kbAskCitationTotal := c.kbAskCitationTotal.Load()
 
-	writeMetricHeader(&builder, "gwf_kb_search_total", "counter", "Total knowledge base search requests.")
-	writeCounter(&builder, "gwf_kb_search_total", kbSearchTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_kb_search_total", "counter", "Total knowledge base search requests.")
+	writeCounter(&builder, "cloudlens_kb_search_total", kbSearchTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_kb_search_hit_total", "counter", "Total knowledge base searches with at least one hit.")
-	writeCounter(&builder, "gwf_kb_search_hit_total", kbSearchHitTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_kb_search_hit_total", "counter", "Total knowledge base searches with at least one hit.")
+	writeCounter(&builder, "cloudlens_kb_search_hit_total", kbSearchHitTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_kb_search_hit_ratio", "gauge", "Knowledge base search hit ratio.")
-	writeGaugeFloat(&builder, "gwf_kb_search_hit_ratio", safeRatio(kbSearchHitTotal, kbSearchTotal), nil)
+	writeMetricHeader(&builder, "cloudlens_kb_search_hit_ratio", "gauge", "Knowledge base search hit ratio.")
+	writeGaugeFloat(&builder, "cloudlens_kb_search_hit_ratio", safeRatio(kbSearchHitTotal, kbSearchTotal), nil)
 
-	writeMetricHeader(&builder, "gwf_kb_ask_total", "counter", "Total knowledge base ask requests.")
-	writeCounter(&builder, "gwf_kb_ask_total", kbAskTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_kb_ask_total", "counter", "Total knowledge base ask requests.")
+	writeCounter(&builder, "cloudlens_kb_ask_total", kbAskTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_kb_ask_citation_total", "counter", "Total knowledge base ask requests with citations.")
-	writeCounter(&builder, "gwf_kb_ask_citation_total", kbAskCitationTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_kb_ask_citation_total", "counter", "Total knowledge base ask requests with citations.")
+	writeCounter(&builder, "cloudlens_kb_ask_citation_total", kbAskCitationTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_kb_ask_citation_ratio", "gauge", "Knowledge base ask citation ratio.")
-	writeGaugeFloat(&builder, "gwf_kb_ask_citation_ratio", safeRatio(kbAskCitationTotal, kbAskTotal), nil)
+	writeMetricHeader(&builder, "cloudlens_kb_ask_citation_ratio", "gauge", "Knowledge base ask citation ratio.")
+	writeGaugeFloat(&builder, "cloudlens_kb_ask_citation_ratio", safeRatio(kbAskCitationTotal, kbAskTotal), nil)
 
-	writeMetricHeader(&builder, "gwf_kb_review_latency_ms", "histogram", "Knowledge base review action latency distribution in milliseconds.")
-	kbReviewCopy.writePrometheus(&builder, "gwf_kb_review_latency_ms", nil)
+	writeMetricHeader(&builder, "cloudlens_kb_review_latency_ms", "histogram", "Knowledge base review action latency distribution in milliseconds.")
+	kbReviewCopy.writePrometheus(&builder, "cloudlens_kb_review_latency_ms", nil)
 
 	controlAgentsTotal := c.controlAgentsTotal.Load()
 	controlAgentsOnline := c.controlAgentsOnline.Load()
@@ -435,21 +435,21 @@ func (c *Collector) RenderPrometheus() string {
 	controlTaskBacklog := c.controlTaskBacklog.Load()
 	controlTaskTimeoutTotal := c.controlTaskTimeoutTotal.Load()
 
-	writeMetricHeader(&builder, "gwf_control_agents_total", "gauge", "Total control plane agents.")
-	writeGaugeInt(&builder, "gwf_control_agents_total", controlAgentsTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_control_agents_total", "gauge", "Total control plane agents.")
+	writeGaugeInt(&builder, "cloudlens_control_agents_total", controlAgentsTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_control_agents_online", "gauge", "Online control plane agents.")
-	writeGaugeInt(&builder, "gwf_control_agents_online", controlAgentsOnline, nil)
+	writeMetricHeader(&builder, "cloudlens_control_agents_online", "gauge", "Online control plane agents.")
+	writeGaugeInt(&builder, "cloudlens_control_agents_online", controlAgentsOnline, nil)
 
-	writeMetricHeader(&builder, "gwf_control_agent_heartbeat_lag_seconds", "gauge", "Max agent heartbeat lag in seconds.")
-	writeGaugeFloat(&builder, "gwf_control_agent_heartbeat_lag_seconds", float64(controlHeartbeatLagMaxMs)/1000.0, nil)
+	writeMetricHeader(&builder, "cloudlens_control_agent_heartbeat_lag_seconds", "gauge", "Max agent heartbeat lag in seconds.")
+	writeGaugeFloat(&builder, "cloudlens_control_agent_heartbeat_lag_seconds", float64(controlHeartbeatLagMaxMs)/1000.0, nil)
 
-	writeMetricHeader(&builder, "gwf_control_task_backlog", "gauge", "Current control plane task backlog (pending tasks).")
-	writeGaugeInt(&builder, "gwf_control_task_backlog", controlTaskBacklog, nil)
+	writeMetricHeader(&builder, "cloudlens_control_task_backlog", "gauge", "Current control plane task backlog (pending tasks).")
+	writeGaugeInt(&builder, "cloudlens_control_task_backlog", controlTaskBacklog, nil)
 
-	writeMetricHeader(&builder, "gwf_control_tasks_total", "gauge", "Control plane task count grouped by status and type.")
+	writeMetricHeader(&builder, "cloudlens_control_tasks_total", "gauge", "Control plane task count grouped by status and type.")
 	if len(controlTaskCounts) == 0 {
-		writeGaugeInt(&builder, "gwf_control_tasks_total", 0, map[string]string{
+		writeGaugeInt(&builder, "cloudlens_control_tasks_total", 0, map[string]string{
 			"status": "pending",
 			"type":   "unknown",
 		})
@@ -465,18 +465,18 @@ func (c *Collector) RenderPrometheus() string {
 			} else if len(parts) == 1 {
 				status = normalizeMetricLabel(parts[0])
 			}
-			writeGaugeInt(&builder, "gwf_control_tasks_total", int64(controlTaskCounts[key]), map[string]string{
+			writeGaugeInt(&builder, "cloudlens_control_tasks_total", int64(controlTaskCounts[key]), map[string]string{
 				"status": status,
 				"type":   taskType,
 			})
 		}
 	}
 
-	writeMetricHeader(&builder, "gwf_control_task_timeout_total", "counter", "Total control plane task timeouts.")
-	writeCounter(&builder, "gwf_control_task_timeout_total", controlTaskTimeoutTotal, nil)
+	writeMetricHeader(&builder, "cloudlens_control_task_timeout_total", "counter", "Total control plane task timeouts.")
+	writeCounter(&builder, "cloudlens_control_task_timeout_total", controlTaskTimeoutTotal, nil)
 
-	writeMetricHeader(&builder, "gwf_control_task_duration_seconds", "histogram", "Control plane task duration distribution in seconds.")
-	controlTaskDurationCopy.writePrometheus(&builder, "gwf_control_task_duration_seconds", nil)
+	writeMetricHeader(&builder, "cloudlens_control_task_duration_seconds", "histogram", "Control plane task duration distribution in seconds.")
+	controlTaskDurationCopy.writePrometheus(&builder, "cloudlens_control_task_duration_seconds", nil)
 
 	return builder.String()
 }

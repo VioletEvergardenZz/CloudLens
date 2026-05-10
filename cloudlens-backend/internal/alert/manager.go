@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"file-watch/internal/dingtalk"
-	"file-watch/internal/email"
-	"file-watch/internal/logger"
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/dingtalk"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/email"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 // Notifier 表示告警通知发送器

@@ -20,10 +20,10 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"file-watch/internal/logger"
-	"file-watch/internal/match"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/match"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 )
 
 const (

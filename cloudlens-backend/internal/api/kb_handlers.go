@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"file-watch/internal/alert"
-	"file-watch/internal/kb"
-	"file-watch/internal/metrics"
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/kb"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/metrics"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 // kbArticles 统一处理知识库列表查询与新增

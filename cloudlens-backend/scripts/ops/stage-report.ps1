@@ -254,9 +254,9 @@ if (-not [string]::IsNullOrWhiteSpace($metricsPath)) {
   $metricsText = Get-Content -Raw -Encoding UTF8 $metricsPath
 }
 
-$uploadQueueFullTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_queue_full_total"
-$uploadSuccessTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_success_total"
-$uploadFailureTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_failure_total"
+$uploadQueueFullTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_queue_full_total"
+$uploadSuccessTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_success_total"
+$uploadFailureTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_failure_total"
 $uploadFailureRatePct = $null
 if ($null -ne $uploadSuccessTotal -and $null -ne $uploadFailureTotal) {
   $uploadDenominator = [double]$uploadSuccessTotal + [double]$uploadFailureTotal
@@ -265,9 +265,9 @@ if ($null -ne $uploadSuccessTotal -and $null -ne $uploadFailureTotal) {
   }
 }
 
-$aiSuccess = Read-MetricValueByLabel -MetricsText $metricsText -MetricName "gwf_ai_log_summary_total" -LabelName "outcome" -LabelValue "success"
-$aiDegraded = Read-MetricValueByLabel -MetricsText $metricsText -MetricName "gwf_ai_log_summary_total" -LabelName "outcome" -LabelValue "degraded"
-$aiTotal = Read-MetricSum -MetricsText $metricsText -MetricName "gwf_ai_log_summary_total"
+$aiSuccess = Read-MetricValueByLabel -MetricsText $metricsText -MetricName "cloudlens_ai_log_summary_total" -LabelName "outcome" -LabelValue "success"
+$aiDegraded = Read-MetricValueByLabel -MetricsText $metricsText -MetricName "cloudlens_ai_log_summary_total" -LabelName "outcome" -LabelValue "degraded"
+$aiTotal = Read-MetricSum -MetricsText $metricsText -MetricName "cloudlens_ai_log_summary_total"
 $aiTargetRatio = 0.2
 if ($null -ne $recap.gateTargets -and $null -ne $recap.gateTargets.aiDegradedRatio) {
   $aiTargetRatio = [double]$recap.gateTargets.aiDegradedRatio
@@ -321,8 +321,8 @@ if ($null -ne $recap.aiReplay) {
   }
 }
 
-$kbSearchHitRatio = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_kb_search_hit_ratio"
-$kbAskCitationRatio = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_kb_ask_citation_ratio"
+$kbSearchHitRatio = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_kb_search_hit_ratio"
+$kbAskCitationRatio = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_kb_ask_citation_ratio"
 $kbHitratePct = if ($null -ne $kbSearchHitRatio) { [double]$kbSearchHitRatio * 100 } else { $null }
 $kbCitationPct = if ($null -ne $kbAskCitationRatio) { [double]$kbAskCitationRatio * 100 } else { $null }
 $kbHitrateTargetPct = 70.0
@@ -340,9 +340,9 @@ if ($null -ne $recap.gateTargets) {
   }
 }
 
-$controlOnline = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_agents_online"
-$controlBacklog = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_task_backlog"
-$controlTimeoutTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_task_timeout_total"
+$controlOnline = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_agents_online"
+$controlBacklog = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_task_backlog"
+$controlTimeoutTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_task_timeout_total"
 
 if ($null -ne $recap.kbRecap) {
   if ($null -ne $recap.kbRecap.hitrate -and $null -ne $recap.kbRecap.hitrate.output) {
@@ -472,7 +472,7 @@ $executionRows += ("| 问答引用率 | kb-eval citation | {0} | {1} |" -f $kbCi
 $executionRows += ("| MTTD 对比 | kb-eval mttd | {0} | {1} |" -f $kbMttdPF, $kbMttdRemark)
 
 $metricRows = @()
-$metricRows += "| gwf_upload_queue_full_total 增量 | 越低越好 | $(Format-NullableNumber -Value $uploadQueueFullTotal -Digits 0) | $(To-PF -Pass $uploadQueuePass) |"
+$metricRows += "| cloudlens_upload_queue_full_total 增量 | 越低越好 | $(Format-NullableNumber -Value $uploadQueueFullTotal -Digits 0) | $(To-PF -Pass $uploadQueuePass) |"
 $metricRows += "| 上传失败率（10m） | < 5% | $(Format-NullableNumber -Value $uploadFailureRatePct -Digits 2 -Suffix '%') | $(To-PF -Pass $uploadFailurePass) |"
 $metricRows += "| AI 降级率 | $aiTargetText | $(Format-NullableNumber -Value $aiDegradedRatioPct -Digits 2 -Suffix '%') | $(To-PF -Pass $aiPass) |"
 $metricRows += "| AI 结构一致性通过率 | $aiStructureTargetText | $(Format-NullableNumber -Value $aiStructurePassRatioPct -Digits 2 -Suffix '%') | $(To-PF -Pass $aiStructurePass) |"

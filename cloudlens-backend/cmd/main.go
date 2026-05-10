@@ -15,11 +15,11 @@ import (
 	"syscall"
 	"time"
 
-	"file-watch/internal/api"
-	"file-watch/internal/config"
-	"file-watch/internal/logger"
-	"file-watch/internal/models"
-	"file-watch/internal/service"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/api"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/config"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/service"
 )
 
 // main 作为入口函数并串联核心启动流程

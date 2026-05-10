@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"file-watch/internal/alert"
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 func TestValidateLogPath_AllowsWatchDirPath(t *testing.T) {

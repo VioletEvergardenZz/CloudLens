@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	aliyuncloud "file-watch/internal/cloud/aliyun"
-	"file-watch/internal/models"
+	aliyuncloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/aliyun"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 type aliyunMetricCandidate struct {

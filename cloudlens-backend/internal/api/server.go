@@ -21,15 +21,15 @@ import (
 	"sync"
 	"time"
 
-	"file-watch/internal/alert"
-	"file-watch/internal/kb"
-	"file-watch/internal/logger"
-	"file-watch/internal/metrics"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
-	"file-watch/internal/service"
-	"file-watch/internal/state"
-	"file-watch/internal/sysinfo"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/kb"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/metrics"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/service"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/state"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/sysinfo"
 )
 
 // Server 管理接口服务的启动与关闭

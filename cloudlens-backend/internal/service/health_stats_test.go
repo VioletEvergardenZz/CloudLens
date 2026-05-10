@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"file-watch/internal/models"
-	"file-watch/internal/persistqueue"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/persistqueue"
 )
 
 func TestHealthSnapshot_CountersAndReasons(t *testing.T) {

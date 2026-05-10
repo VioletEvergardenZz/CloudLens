@@ -3,7 +3,7 @@ package api
 import (
 	"strings"
 
-	"file-watch/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
 )
 
 // currentAlertState 统一封装告警状态读取路径

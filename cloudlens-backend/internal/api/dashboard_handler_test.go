@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"file-watch/internal/state"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/state"
 )
 
 func decodeDashboardPayload(t *testing.T, body []byte) state.DashboardData {

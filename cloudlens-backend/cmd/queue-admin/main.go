@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"file-watch/internal/persistqueue"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/persistqueue"
 )
 
 const (

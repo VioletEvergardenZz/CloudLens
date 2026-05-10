@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 const (

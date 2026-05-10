@@ -243,7 +243,7 @@ function Collect-Snapshot {
   Set-Content -Path $metricsFile -Encoding utf8 -Value $metricsText
   $healthResp | ConvertTo-Json -Depth 8 | Set-Content -Path $healthFile -Encoding utf8
 
-  $failureReasons = Read-MetricMapByLabel -MetricsText $metricsText -MetricName "gwf_upload_failure_reason_total" -LabelName "reason"
+  $failureReasons = Read-MetricMapByLabel -MetricsText $metricsText -MetricName "cloudlens_upload_failure_reason_total" -LabelName "reason"
 
   return [pscustomobject]@{
     name        = $Name
@@ -251,15 +251,15 @@ function Collect-Snapshot {
     metricsFile = $metricsFile
     healthFile  = $healthFile
     metrics     = [pscustomobject]@{
-      fileEventsTotal    = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_file_events_total"
-      queueLength        = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_queue_length"
-      inFlight           = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_inflight"
-      workers            = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_workers"
-      queueFullTotal     = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_queue_full_total"
-      queueShedTotal     = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_queue_shed_total"
-      retryTotal         = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_retry_total"
-      uploadSuccessTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_success_total"
-      uploadFailureTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_upload_failure_total"
+      fileEventsTotal    = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_file_events_total"
+      queueLength        = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_queue_length"
+      inFlight           = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_inflight"
+      workers            = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_workers"
+      queueFullTotal     = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_queue_full_total"
+      queueShedTotal     = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_queue_shed_total"
+      retryTotal         = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_retry_total"
+      uploadSuccessTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_success_total"
+      uploadFailureTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_upload_failure_total"
       failureReasons     = Map-ToPSObject -InputMap $failureReasons
     }
     health      = $healthResp

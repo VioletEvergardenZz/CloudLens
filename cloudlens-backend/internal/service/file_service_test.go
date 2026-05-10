@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 func TestParseUploadRetryDelays(t *testing.T) {

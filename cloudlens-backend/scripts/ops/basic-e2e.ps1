@@ -215,8 +215,8 @@ try {
   exit 2
 }
 
-$uploadSuccessBefore = Read-MetricValue -MetricsText $metricsBeforeText -MetricName "gwf_upload_success_total"
-$uploadFailureBefore = Read-MetricValue -MetricsText $metricsBeforeText -MetricName "gwf_upload_failure_total"
+$uploadSuccessBefore = Read-MetricValue -MetricsText $metricsBeforeText -MetricName "cloudlens_upload_success_total"
+$uploadFailureBefore = Read-MetricValue -MetricsText $metricsBeforeText -MetricName "cloudlens_upload_failure_total"
 $notifyBefore = Get-NotificationCountFromDashboard -Dashboard $dashboardBefore
 $result.notification.before = $notifyBefore
 
@@ -303,8 +303,8 @@ while ((Get-Date) -lt $deadline) {
     continue
   }
 
-  $uploadSuccessAfter = Read-MetricValue -MetricsText $metricsCurrent -MetricName "gwf_upload_success_total"
-  $uploadFailureAfter = Read-MetricValue -MetricsText $metricsCurrent -MetricName "gwf_upload_failure_total"
+  $uploadSuccessAfter = Read-MetricValue -MetricsText $metricsCurrent -MetricName "cloudlens_upload_success_total"
+  $uploadFailureAfter = Read-MetricValue -MetricsText $metricsCurrent -MetricName "cloudlens_upload_failure_total"
 
   $successDelta = 0
   $failureDelta = 0

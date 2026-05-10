@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 func TestCollectorRenderPrometheus(t *testing.T) {
@@ -33,24 +33,24 @@ func TestCollectorRenderPrometheus(t *testing.T) {
 	out := collector.RenderPrometheus()
 
 	mustContain := []string{
-		"gwf_file_events_total 1",
-		"gwf_upload_queue_length 7",
-		"gwf_upload_workers 3",
-		"gwf_upload_inflight 2",
-		"gwf_upload_queue_full_total 1",
-		"gwf_upload_queue_shed_total 1",
-		"gwf_upload_retry_total 1",
-		"gwf_upload_success_total 1",
-		"gwf_upload_failure_total 1",
-		`gwf_upload_failure_reason_total{reason="network timeout"} 1`,
-		`gwf_ai_log_summary_total{outcome="success"} 1`,
-		"gwf_ai_log_summary_retry_total 1",
-		"gwf_kb_search_total 1",
-		"gwf_kb_search_hit_total 1",
-		"gwf_kb_search_hit_ratio 1",
-		"gwf_kb_ask_total 1",
-		"gwf_kb_ask_citation_total 1",
-		"gwf_kb_ask_citation_ratio 1",
+		"cloudlens_file_events_total 1",
+		"cloudlens_upload_queue_length 7",
+		"cloudlens_upload_workers 3",
+		"cloudlens_upload_inflight 2",
+		"cloudlens_upload_queue_full_total 1",
+		"cloudlens_upload_queue_shed_total 1",
+		"cloudlens_upload_retry_total 1",
+		"cloudlens_upload_success_total 1",
+		"cloudlens_upload_failure_total 1",
+		`cloudlens_upload_failure_reason_total{reason="network timeout"} 1`,
+		`cloudlens_ai_log_summary_total{outcome="success"} 1`,
+		"cloudlens_ai_log_summary_retry_total 1",
+		"cloudlens_kb_search_total 1",
+		"cloudlens_kb_search_hit_total 1",
+		"cloudlens_kb_search_hit_ratio 1",
+		"cloudlens_kb_ask_total 1",
+		"cloudlens_kb_ask_citation_total 1",
+		"cloudlens_kb_ask_citation_ratio 1",
 	}
 	for _, token := range mustContain {
 		if !strings.Contains(out, token) {

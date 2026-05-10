@@ -156,9 +156,9 @@ function Write-MarkdownReport {
   if ($Result.metrics.available) {
     $lines += "| 指标 | 值 |"
     $lines += "| --- | --- |"
-    $lines += "| gwf_control_agents_total | $($Result.metrics.total) |"
-    $lines += "| gwf_control_agents_online | $($Result.metrics.online) |"
-    $lines += "| gwf_control_agent_heartbeat_lag_seconds | $($Result.metrics.heartbeatLagSeconds) |"
+    $lines += "| cloudlens_control_agents_total | $($Result.metrics.total) |"
+    $lines += "| cloudlens_control_agents_online | $($Result.metrics.online) |"
+    $lines += "| cloudlens_control_agent_heartbeat_lag_seconds | $($Result.metrics.heartbeatLagSeconds) |"
     $lines += "| 与巡检结果一致 | $($Result.metrics.matched) |"
   } else {
     $lines += "- 未获取到 /metrics，对账跳过。"
@@ -251,9 +251,9 @@ try {
     $metricsText = [string]$metricsResp.Content
     if (-not [string]::IsNullOrWhiteSpace($metricsText)) {
       $metricsSummary.available = $true
-      $metricsTotal = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_agents_total"
-      $metricsOnline = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_agents_online"
-      $metricsLag = Read-MetricValue -MetricsText $metricsText -MetricName "gwf_control_agent_heartbeat_lag_seconds"
+      $metricsTotal = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_agents_total"
+      $metricsOnline = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_agents_online"
+      $metricsLag = Read-MetricValue -MetricsText $metricsText -MetricName "cloudlens_control_agent_heartbeat_lag_seconds"
       if ($metricsTotal -ne $null) { $metricsSummary.total = [int][Math]::Round($metricsTotal, 0) }
       if ($metricsOnline -ne $null) { $metricsSummary.online = [int][Math]::Round($metricsOnline, 0) }
       if ($metricsLag -ne $null) { $metricsSummary.heartbeatLagSeconds = [Math]::Round($metricsLag, 3) }

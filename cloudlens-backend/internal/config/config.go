@@ -18,10 +18,10 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"file-watch/internal/alert"
-	"file-watch/internal/match"
-	"file-watch/internal/models"
-	"file-watch/internal/pathutil"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/match"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 )
 
 const (

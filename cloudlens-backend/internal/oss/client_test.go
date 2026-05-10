@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"file-watch/internal/models"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/models"
 )
 
 func TestIsUploadETagVerifyEnabled(t *testing.T) {

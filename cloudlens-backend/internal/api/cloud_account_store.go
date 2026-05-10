@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	aliyuncloud "file-watch/internal/cloud/aliyun"
+	aliyuncloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/aliyun"
 
 	_ "modernc.org/sqlite"
 )

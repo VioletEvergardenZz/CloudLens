@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"file-watch/internal/metrics"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/metrics"
 )
 
 func TestPrometheusMetrics(t *testing.T) {
@@ -29,7 +29,7 @@ func TestPrometheusMetrics(t *testing.T) {
 		t.Fatalf("unexpected content-type: %s", contentType)
 	}
 	body := rr.Body.String()
-	if !strings.Contains(body, "gwf_file_events_total 1") {
+	if !strings.Contains(body, "cloudlens_file_events_total 1") {
 		t.Fatalf("unexpected metrics body: %s", body)
 	}
 }

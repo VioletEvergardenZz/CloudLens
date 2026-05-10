@@ -98,26 +98,26 @@ if ([string]::IsNullOrWhiteSpace($content)) {
 # - 覆盖上传、AI、知识库、控制面四条主链路
 # - 使用正则而非精确文本，兼容标签变化和样本顺序变化
 $required = @(
-  @{ Name = "gwf_file_events_total"; Pattern = "(?m)^gwf_file_events_total(\{.*\})?\s+" },
-  @{ Name = "gwf_upload_queue_length"; Pattern = "(?m)^gwf_upload_queue_length(\{.*\})?\s+" },
-  @{ Name = "gwf_upload_queue_full_total"; Pattern = "(?m)^gwf_upload_queue_full_total(\{.*\})?\s+" },
-  @{ Name = "gwf_upload_queue_shed_total"; Pattern = "(?m)^gwf_upload_queue_shed_total(\{.*\})?\s+" },
-  @{ Name = "gwf_upload_success_total"; Pattern = "(?m)^gwf_upload_success_total(\{.*\})?\s+" },
-  @{ Name = "gwf_upload_failure_total"; Pattern = "(?m)^gwf_upload_failure_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_file_events_total"; Pattern = "(?m)^cloudlens_file_events_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_queue_length"; Pattern = "(?m)^cloudlens_upload_queue_length(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_queue_full_total"; Pattern = "(?m)^cloudlens_upload_queue_full_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_queue_shed_total"; Pattern = "(?m)^cloudlens_upload_queue_shed_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_success_total"; Pattern = "(?m)^cloudlens_upload_success_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_failure_total"; Pattern = "(?m)^cloudlens_upload_failure_total(\{.*\})?\s+" },
   # histogram 指标需要校验 bucket/sum/count 子项，而不是裸指标名
-  @{ Name = "gwf_upload_duration_seconds"; Pattern = "(?m)^gwf_upload_duration_seconds_(bucket|sum|count)(\{.*\})?\s+" },
+  @{ Name = "cloudlens_upload_duration_seconds"; Pattern = "(?m)^cloudlens_upload_duration_seconds_(bucket|sum|count)(\{.*\})?\s+" },
   # ai summary 按 label 输出，零流量时可能仅有 HELP/TYPE，无样本行
-  @{ Name = "gwf_ai_log_summary_total"; Pattern = '(?m)^gwf_ai_log_summary_total\{.*outcome="(success|degraded)".*\}\s+' },
-  @{ Name = "gwf_ai_log_summary_retry_total"; Pattern = "(?m)^gwf_ai_log_summary_retry_total(\{.*\})?\s+" },
-  @{ Name = "gwf_kb_search_hit_ratio"; Pattern = "(?m)^gwf_kb_search_hit_ratio(\{.*\})?\s+" },
-  @{ Name = "gwf_kb_ask_citation_ratio"; Pattern = "(?m)^gwf_kb_ask_citation_ratio(\{.*\})?\s+" },
-  @{ Name = "gwf_control_agents_total"; Pattern = "(?m)^gwf_control_agents_total(\{.*\})?\s+" },
-  @{ Name = "gwf_control_agents_online"; Pattern = "(?m)^gwf_control_agents_online(\{.*\})?\s+" },
-  @{ Name = "gwf_control_agent_heartbeat_lag_seconds"; Pattern = "(?m)^gwf_control_agent_heartbeat_lag_seconds(\{.*\})?\s+" },
-  @{ Name = "gwf_control_task_backlog"; Pattern = "(?m)^gwf_control_task_backlog(\{.*\})?\s+" },
-  @{ Name = "gwf_control_tasks_total"; Pattern = "(?m)^gwf_control_tasks_total(\{.*\})?\s+" },
-  @{ Name = "gwf_control_task_timeout_total"; Pattern = "(?m)^gwf_control_task_timeout_total(\{.*\})?\s+" },
-  @{ Name = "gwf_control_task_duration_seconds"; Pattern = "(?m)^gwf_control_task_duration_seconds_(bucket|sum|count)(\{.*\})?\s+" }
+  @{ Name = "cloudlens_ai_log_summary_total"; Pattern = '(?m)^cloudlens_ai_log_summary_total\{.*outcome="(success|degraded)".*\}\s+' },
+  @{ Name = "cloudlens_ai_log_summary_retry_total"; Pattern = "(?m)^cloudlens_ai_log_summary_retry_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_kb_search_hit_ratio"; Pattern = "(?m)^cloudlens_kb_search_hit_ratio(\{.*\})?\s+" },
+  @{ Name = "cloudlens_kb_ask_citation_ratio"; Pattern = "(?m)^cloudlens_kb_ask_citation_ratio(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_agents_total"; Pattern = "(?m)^cloudlens_control_agents_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_agents_online"; Pattern = "(?m)^cloudlens_control_agents_online(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_agent_heartbeat_lag_seconds"; Pattern = "(?m)^cloudlens_control_agent_heartbeat_lag_seconds(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_task_backlog"; Pattern = "(?m)^cloudlens_control_task_backlog(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_tasks_total"; Pattern = "(?m)^cloudlens_control_tasks_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_task_timeout_total"; Pattern = "(?m)^cloudlens_control_task_timeout_total(\{.*\})?\s+" },
+  @{ Name = "cloudlens_control_task_duration_seconds"; Pattern = "(?m)^cloudlens_control_task_duration_seconds_(bucket|sum|count)(\{.*\})?\s+" }
 )
 
 $missing = @()
@@ -146,7 +146,7 @@ if ($missing.Count -gt 0) {
 if ($CheckThresholds) {
   $findings = @()
 
-  $queueLength = Read-MetricValue -MetricsText $content -MetricName "gwf_upload_queue_length"
+  $queueLength = Read-MetricValue -MetricsText $content -MetricName "cloudlens_upload_queue_length"
   if ($queueLength -ne $null) {
     if ($queueLength -ge $QueueLengthCritical) {
       $findings += [PSCustomObject]@{
@@ -165,8 +165,8 @@ if ($CheckThresholds) {
     }
   }
 
-  $uploadSuccess = Read-MetricValue -MetricsText $content -MetricName "gwf_upload_success_total"
-  $uploadFailure = Read-MetricValue -MetricsText $content -MetricName "gwf_upload_failure_total"
+  $uploadSuccess = Read-MetricValue -MetricsText $content -MetricName "cloudlens_upload_success_total"
+  $uploadFailure = Read-MetricValue -MetricsText $content -MetricName "cloudlens_upload_failure_total"
   $uploadTotal = $uploadSuccess + $uploadFailure
   $uploadFailureRatio = 0.0
   if ($uploadTotal -gt 0) {
@@ -189,8 +189,8 @@ if ($CheckThresholds) {
     }
   }
 
-  $aiDegraded = Read-MetricValueByLabel -MetricsText $content -MetricName "gwf_ai_log_summary_total" -LabelName "outcome" -LabelValue "degraded"
-  $aiTotal = Read-MetricSum -MetricsText $content -MetricName "gwf_ai_log_summary_total"
+  $aiDegraded = Read-MetricValueByLabel -MetricsText $content -MetricName "cloudlens_ai_log_summary_total" -LabelName "outcome" -LabelValue "degraded"
+  $aiTotal = Read-MetricSum -MetricsText $content -MetricName "cloudlens_ai_log_summary_total"
   $aiDegradedRatio = 0.0
   if ($aiTotal -gt 0) {
     $aiDegradedRatio = $aiDegraded / $aiTotal

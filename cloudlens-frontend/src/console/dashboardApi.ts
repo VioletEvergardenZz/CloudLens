@@ -372,11 +372,11 @@ const parseMetricValue = (text: string, metricName: string): number | null => {
 };
 
 const parseReviewLatencyP95 = (text: string): number | null => {
-  const total = parseMetricValue(text, "gwf_kb_review_latency_ms_count");
+  const total = parseMetricValue(text, "cloudlens_kb_review_latency_ms_count");
   if (total === null || total <= 0) {
     return null;
   }
-  const bucketPattern = /^gwf_kb_review_latency_ms_bucket\{[^}]*le="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)$/gm;
+  const bucketPattern = /^cloudlens_kb_review_latency_ms_bucket\{[^}]*le="([^"]+)"[^}]*\}\s+([0-9.eE+-]+)$/gm;
   const buckets: Array<{ le: number; count: number }> = [];
   let match: RegExpExecArray | null;
   while ((match = bucketPattern.exec(text)) !== null) {
@@ -410,8 +410,8 @@ export const fetchKBMetrics = async (): Promise<KnowledgeMetricsSnapshot> => {
   await ensureOk(res, "知识库指标加载");
   const text = await res.text();
   return {
-    searchHitRatio: parseMetricValue(text, "gwf_kb_search_hit_ratio"),
-    askCitationRatio: parseMetricValue(text, "gwf_kb_ask_citation_ratio"),
+    searchHitRatio: parseMetricValue(text, "cloudlens_kb_search_hit_ratio"),
+    askCitationRatio: parseMetricValue(text, "cloudlens_kb_ask_citation_ratio"),
     reviewLatencyP95Ms: parseReviewLatencyP95(text),
   };
 };

@@ -1,4 +1,4 @@
-module file-watch
+module github.com/VioletEvergardenZz/CloudLens/cloudlens-backend
 
 go 1.24.0
 
