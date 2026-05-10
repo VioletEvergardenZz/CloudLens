@@ -39,6 +39,8 @@ const (
 	defaultAlertSuppressEnabled             = true
 	defaultAIMaxLines                       = 200
 	defaultAITimeout                        = "20s"
+	defaultAliyunRegion                     = "cn-hangzhou"
+	defaultAliyunMetricPeriod               = "60"
 	defaultUploadRetryMaxAttempts           = 4
 	defaultUploadResumablePartSize          = 10 * 1024 * 1024
 	defaultUploadResumableRoutines          = 1
@@ -65,14 +67,14 @@ func LoadConfig(configFile string) (*models.Config, error) {
 		return nil, err
 	}
 
+	var cfg models.Config //值类型结构体 在栈上分配、读完填数据后再取地址即可
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败: %w", err)
-	}
-
-	var cfg models.Config //值类型结构体 在栈上分配、读完填数据后再取地址即可
-	err = yaml.Unmarshal(data, &cfg)
-	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("读取配置文件失败: %w", err)
+		}
+		// 云资产验证场景允许只用环境变量启动，避免为了只读查询云资源还必须准备完整文件入云配置。
+	} else if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
@@ -102,17 +104,19 @@ func ValidateConfig(config *models.Config) error {
 	if err := validateFileExt(config.FileExt); err != nil {
 		return err
 	}
-	if err := requireValue(config.Bucket, "OSS Bucket"); err != nil {
-		return err
-	}
-	if config.AK == "" || config.SK == "" {
-		return fmt.Errorf("OSS认证信息不能为空")
-	}
-	if err := validateEndpoint(config.Endpoint); err != nil {
-		return err
-	}
-	if err := requireValue(config.Region, "OSS Region"); err != nil {
-		return err
+	if filePipelineConfigured(config) {
+		if err := requireValue(config.Bucket, "OSS Bucket"); err != nil {
+			return err
+		}
+		if config.AK == "" || config.SK == "" {
+			return fmt.Errorf("OSS认证信息不能为空")
+		}
+		if err := validateEndpoint(config.Endpoint); err != nil {
+			return err
+		}
+		if err := requireValue(config.Region, "OSS Region"); err != nil {
+			return err
+		}
 	}
 	if err := validateLogLevel(config.LogLevel); err != nil {
 		return err
@@ -244,6 +248,18 @@ func applyEnvOverrides(cfg *models.Config) error {
 	if ok {
 		cfg.AIMaxLines = aiMaxLines
 	}
+	cloudAssetsEnabled, ok, err := boolFromEnv("CLOUD_ASSETS_ENABLED")
+	if err != nil {
+		return err
+	}
+	if ok {
+		cfg.CloudAssetsEnabled = cloudAssetsEnabled
+	}
+	cfg.AliyunAccessKeyID = stringFromEnv("ALIYUN_ACCESS_KEY_ID", cfg.AliyunAccessKeyID)
+	cfg.AliyunAccessKeySecret = stringFromEnv("ALIYUN_ACCESS_KEY_SECRET", cfg.AliyunAccessKeySecret)
+	cfg.AliyunRegion = stringFromEnv("ALIYUN_REGION", cfg.AliyunRegion)
+	cfg.AliyunRegions = stringFromEnv("ALIYUN_REGIONS", cfg.AliyunRegions)
+	cfg.AliyunMetricPeriod = stringFromEnv("ALIYUN_METRIC_PERIOD", cfg.AliyunMetricPeriod)
 	retryMaxAttempts, ok, err := intFromEnv("UPLOAD_RETRY_MAX_ATTEMPTS")
 	if err != nil {
 		return err
@@ -355,6 +371,26 @@ func applyDefaults(cfg *models.Config) {
 	if cfg.AIMaxLines <= 0 {
 		cfg.AIMaxLines = defaultAIMaxLines
 	}
+	if strings.TrimSpace(cfg.AliyunRegion) == "" {
+		cfg.AliyunRegion = defaultAliyunRegion
+	}
+	if strings.TrimSpace(cfg.AliyunMetricPeriod) == "" {
+		cfg.AliyunMetricPeriod = defaultAliyunMetricPeriod
+	}
+}
+
+// filePipelineConfigured 判断是否启用旧文件入云链路。
+// 云资产只读验证允许不配置 OSS；一旦配置监控目录或任一 OSS 字段，就继续按文件入云要求校验。
+func filePipelineConfigured(cfg *models.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.WatchDir) != "" ||
+		strings.TrimSpace(cfg.Bucket) != "" ||
+		strings.TrimSpace(cfg.AK) != "" ||
+		strings.TrimSpace(cfg.SK) != "" ||
+		strings.TrimSpace(cfg.Endpoint) != "" ||
+		strings.TrimSpace(cfg.Region) != ""
 }
 
 // boolPtr 返回布尔指针，用于表达可选布尔配置

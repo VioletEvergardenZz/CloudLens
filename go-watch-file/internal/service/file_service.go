@@ -124,11 +124,40 @@ func NewFileService(config *models.Config, configPath string) (*FileService, err
 
 // newOSSClient 初始化 OSS 客户端
 func newOSSClient(config *models.Config) (*oss.Client, error) {
+	if !ossSettingsConfigured(config) {
+		logger.Info("OSS 未配置，文件入云链路进入空闲模式")
+		return nil, nil
+	}
+	if !ossSettingsComplete(config) {
+		return nil, fmt.Errorf("OSS配置不完整，启用文件入云时必须配置 bucket、ak、sk、endpoint、region")
+	}
 	client, err := oss.NewClient(config)
 	if err != nil {
 		return nil, fmt.Errorf("初始化OSS客户端失败: %w", err)
 	}
 	return client, nil
+}
+
+func ossSettingsConfigured(config *models.Config) bool {
+	if config == nil {
+		return false
+	}
+	return strings.TrimSpace(config.Bucket) != "" ||
+		strings.TrimSpace(config.AK) != "" ||
+		strings.TrimSpace(config.SK) != "" ||
+		strings.TrimSpace(config.Endpoint) != "" ||
+		strings.TrimSpace(config.Region) != ""
+}
+
+func ossSettingsComplete(config *models.Config) bool {
+	if config == nil {
+		return false
+	}
+	return strings.TrimSpace(config.Bucket) != "" &&
+		strings.TrimSpace(config.AK) != "" &&
+		strings.TrimSpace(config.SK) != "" &&
+		strings.TrimSpace(config.Endpoint) != "" &&
+		strings.TrimSpace(config.Region) != ""
 }
 
 // newDingTalkRobot 根据配置创建钉钉机器人

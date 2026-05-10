@@ -67,6 +67,12 @@ type Config struct {
 	AIModel                          string        `yaml:"ai_model"`
 	AITimeout                        string        `yaml:"ai_timeout"`
 	AIMaxLines                       int           `yaml:"ai_max_lines"`
+	CloudAssetsEnabled               bool          `yaml:"cloud_assets_enabled"`
+	AliyunAccessKeyID                string        `yaml:"aliyun_access_key_id"`
+	AliyunAccessKeySecret            string        `yaml:"aliyun_access_key_secret"`
+	AliyunRegion                     string        `yaml:"aliyun_region"`
+	AliyunRegions                    string        `yaml:"aliyun_regions"`
+	AliyunMetricPeriod               string        `yaml:"aliyun_metric_period"`
 }
 
 // FileEvent 文件事件结构体
