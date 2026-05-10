@@ -222,6 +222,9 @@ type MonitorMetric = {
   range: string;
   average: string;
   sampledAt: string;
+  trend: string;
+  sparklinePoints: AliyunMetricPoint[];
+  recentSamples: string[];
   points: number;
   status: "ok" | "empty" | "error";
   note: string;
@@ -933,6 +936,11 @@ const summarizeMetricPoints = (points?: AliyunMetricPoint[]) => {
   };
 };
 
+const recentMetricPoints = (points?: AliyunMetricPoint[], limit = 8) => {
+  if (!points?.length) return [];
+  return points.slice(Math.max(0, points.length - limit));
+};
+
 const mergeServerRowsWithPrevious = (
   freshRows: CloudServer[],
   previousRows: CloudServer[],
@@ -1003,11 +1011,21 @@ const mergeOverviewMapWithPrevious = (
 };
 
 const buildDerivedSeries = (metricName: string, seriesList: Array<AliyunMetricSeries | undefined>): AliyunMetricSeries | undefined => {
-  const latestPoints = seriesList.map((series) => latestPoint(series?.points));
-  if (latestPoints.some((point) => !point)) return undefined;
-  const timestamp = Math.max(...latestPoints.map((point) => point?.timestamp ?? 0));
-  const value = latestPoints.reduce((total, point) => total + (point?.value ?? 0), 0);
-  return { namespace: "derived", metricName, points: [{ timestamp, value }] };
+  const validSeries = seriesList.filter((series): series is AliyunMetricSeries => Boolean(series?.points?.length));
+  if (validSeries.length !== seriesList.length || !validSeries.length) return undefined;
+  const baseline = validSeries[0]?.points ?? [];
+  const extraMaps = validSeries.slice(1).map((series) => new Map((series.points ?? []).map((point) => [point.timestamp, point.value])));
+  const points = baseline.flatMap((point) => {
+    let total = point.value;
+    for (const extraMap of extraMaps) {
+      const next = extraMap.get(point.timestamp);
+      if (typeof next !== "number") return [];
+      total += next;
+    }
+    return [{ timestamp: point.timestamp, value: total }];
+  });
+  if (!points.length) return undefined;
+  return { namespace: "derived", metricName, points };
 };
 
 const derivedMetricKeys = new Set<MonitorMetricKey>(["internetTotal", "intranetTotal", "networkTotal"]);
@@ -1019,6 +1037,13 @@ const formatMetricTime = (timestamp?: number) => {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString("zh-CN", { hour12: false });
+};
+
+const formatMetricShortTime = (timestamp?: number) => {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", { hour12: false });
 };
 
 const formatAgeText = (ageMs: number) => {
@@ -1095,6 +1120,51 @@ const metricSourceLabel = (series?: AliyunMetricSeries) => {
   return namespace || "未知来源";
 };
 
+const formatMetricDelta = (key: MonitorMetricKey, value: number) => {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (key === "cpu" || key === "memory" || key === "disk") {
+    return `${sign}${abs.toFixed(2)} pct`;
+  }
+  if (key === "load1m") {
+    return `${sign}${abs.toFixed(2)}`;
+  }
+  if (key === "diskReadBps" || key === "diskWriteBps") {
+    return `${sign}${formatRateValue(abs, "B/s")}`;
+  }
+  return `${sign}${formatRateValue(abs, "bit/s")}`;
+};
+
+const buildMetricTrend = (key: MonitorMetricKey, points?: AliyunMetricPoint[]) => {
+  const recentPoints = recentMetricPoints(points);
+  if (!recentPoints.length) return "--";
+  if (recentPoints.length === 1) return "单点采样";
+  const first = recentPoints[0];
+  const latest = recentPoints.at(-1);
+  if (!first || !latest) return "--";
+  const delta = latest.value - first.value;
+  if (Math.abs(delta) < 0.0001) return "近窗基本持平";
+  return `${delta > 0 ? "上升" : "下降"} ${formatMetricDelta(key, delta)}`;
+};
+
+const buildRecentSamples = (key: MonitorMetricKey, points?: AliyunMetricPoint[]) =>
+  recentMetricPoints(points, 6).map((point) => `${formatMetricShortTime(point.timestamp)} ${formatMetricValue(key, point.value)}`);
+
+const buildSparklinePath = (points: AliyunMetricPoint[], width = 112, height = 28) => {
+  if (points.length < 2) return "";
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  return points
+    .map((point, index) => {
+      const x = (index / Math.max(1, points.length - 1)) * width;
+      const y = height - ((point.value - min) / range) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+};
+
 const buildMetricNote = (
   item: { key: MonitorMetricKey },
   latest: AliyunMetricPoint | undefined,
@@ -1138,6 +1208,9 @@ const buildMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => 
       range: summary ? `${formatMetricValue(item.key, summary.min)} ~ ${formatMetricValue(item.key, summary.max)}` : "--",
       average: summary ? formatMetricValue(item.key, summary.average) : "--",
       sampledAt: formatMetricTime(latest?.timestamp) || "--",
+      trend: buildMetricTrend(item.key, points),
+      sparklinePoints: recentMetricPoints(points),
+      recentSamples: buildRecentSamples(item.key, points),
       points: points.length,
       status: latest ? "ok" : error ? "error" : "empty",
       note: buildMetricNote(item, latest, series, error),
@@ -1202,6 +1275,24 @@ function Utilization({ value }: { value: number }) {
       <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
       <b>{formatPercentValue(value)}</b>
     </span>
+  );
+}
+
+function MetricSparkline({ points, status }: { points: AliyunMetricPoint[]; status: MonitorMetric["status"] }) {
+  if (points.length < 2) {
+    return <span className="metric-sparkline-empty">{points.length === 1 ? "单点" : "无趋势"}</span>;
+  }
+  const first = points[0];
+  const latest = points.at(-1);
+  const delta = (latest?.value ?? 0) - (first?.value ?? 0);
+  const trendClass = status !== "ok" ? "muted" : delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const path = buildSparklinePath(points);
+  return (
+    <div className={`metric-sparkline metric-sparkline-${trendClass}`}>
+      <svg viewBox="0 0 112 28" aria-hidden="true" focusable="false">
+        <path d={path} pathLength={100} />
+      </svg>
+    </div>
   );
 }
 
@@ -1938,6 +2029,8 @@ export function CloudResourceConsole() {
                   <th>当前值</th>
                   <th>30 分钟范围</th>
                   <th>均值</th>
+                  <th>趋势</th>
+                  <th>最近采样</th>
                   <th>最新采样</th>
                   <th>采样点数</th>
                   <th>状态</th>
@@ -1951,6 +2044,13 @@ export function CloudResourceConsole() {
                   <td>{item.value}</td>
                   <td>{item.range}</td>
                   <td>{item.average}</td>
+                  <td className="metric-trend-cell">
+                    <MetricSparkline points={item.sparklinePoints} status={item.status} />
+                    <span>{item.trend}</span>
+                  </td>
+                  <td className="metric-samples-cell">
+                    {item.recentSamples.length ? item.recentSamples.map((sample) => <span key={`${item.key}-${sample}`}>{sample}</span>) : <span>--</span>}
+                  </td>
                   <td>{item.sampledAt}</td>
                   <td>{item.points}</td>
                   <td><StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>{item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}</StatusText></td>

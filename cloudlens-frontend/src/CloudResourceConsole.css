@@ -858,6 +858,74 @@ select {
   color: #1f2937;
 }
 
+.metric-trend-cell,
+.metric-samples-cell {
+  min-width: 0;
+}
+
+.metric-trend-cell span,
+.metric-samples-cell span {
+  display: block;
+  margin-top: 0;
+}
+
+.metric-trend-cell span {
+  margin-top: 6px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.metric-samples-cell span {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.metric-sparkline {
+  width: 112px;
+  height: 28px;
+  border-radius: 4px;
+  background: #f8fafc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.metric-sparkline svg {
+  width: 112px;
+  height: 28px;
+  overflow: visible;
+}
+
+.metric-sparkline path {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.metric-sparkline-up path {
+  stroke: #0f9f6e;
+}
+
+.metric-sparkline-down path {
+  stroke: #dc2626;
+}
+
+.metric-sparkline-flat path {
+  stroke: #2563eb;
+}
+
+.metric-sparkline-muted path {
+  stroke: #94a3b8;
+}
+
+.metric-sparkline-empty {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
 .settings-table {
   border: 1px solid #d8dee6;
   background: #ffffff;
