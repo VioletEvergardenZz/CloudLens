@@ -191,6 +191,7 @@ func applyEnvOverrides(cfg *models.Config) error {
 	cfg.Bucket = stringFromEnv("OSS_BUCKET", cfg.Bucket)
 	cfg.Endpoint = stringFromEnv("OSS_ENDPOINT", cfg.Endpoint)
 	cfg.Region = stringFromEnv("OSS_REGION", cfg.Region)
+	cfg.APIBind = stringFromEnv("API_BIND", cfg.APIBind)
 	cfg.APICORSOrigins = stringFromEnv("API_CORS_ORIGINS", cfg.APICORSOrigins)
 	cfg.UploadQueuePersistFile = stringFromEnv("UPLOAD_QUEUE_PERSIST_FILE", cfg.UploadQueuePersistFile)
 	queuePersistEnabled, ok, err := boolFromEnv("UPLOAD_QUEUE_PERSIST_ENABLED")
@@ -255,10 +256,10 @@ func applyEnvOverrides(cfg *models.Config) error {
 	if ok {
 		cfg.CloudAssetsEnabled = cloudAssetsEnabled
 	}
-	cfg.AliyunAccessKeyID = stringFromEnv("ALIYUN_ACCESS_KEY_ID", cfg.AliyunAccessKeyID)
-	cfg.AliyunAccessKeySecret = stringFromEnv("ALIYUN_ACCESS_KEY_SECRET", cfg.AliyunAccessKeySecret)
-	cfg.AliyunRegion = stringFromEnv("ALIYUN_REGION", cfg.AliyunRegion)
-	cfg.AliyunRegions = stringFromEnv("ALIYUN_REGIONS", cfg.AliyunRegions)
+	cfg.AliyunAccessKeyID = stringFromEnvAny(cfg.AliyunAccessKeyID, "ALIYUN_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_ID")
+	cfg.AliyunAccessKeySecret = stringFromEnvAny(cfg.AliyunAccessKeySecret, "ALIYUN_ACCESS_KEY_SECRET", "ALIBABA_CLOUD_ACCESS_KEY_SECRET")
+	cfg.AliyunRegion = stringFromEnvAny(cfg.AliyunRegion, "ALIYUN_REGION", "ALIYUN_REGION_ID", "ALIBABA_CLOUD_REGION_ID")
+	cfg.AliyunRegions = stringFromEnvAny(cfg.AliyunRegions, "ALIYUN_REGIONS", "ALIYUN_REGION_IDS")
 	cfg.AliyunMetricPeriod = stringFromEnv("ALIYUN_METRIC_PERIOD", cfg.AliyunMetricPeriod)
 	retryMaxAttempts, ok, err := intFromEnv("UPLOAD_RETRY_MAX_ATTEMPTS")
 	if err != nil {
@@ -404,6 +405,20 @@ func stringFromEnv(envKey, current string) string {
 		trimmed := strings.TrimSpace(val)
 		if trimmed != "" {
 			return trimmed
+		}
+	}
+	return strings.TrimSpace(resolveEnvPlaceholder(current))
+}
+
+// stringFromEnvAny 用于兼容同一配置的多个环境变量命名。
+// 云厂商 SDK 与本项目命名存在差异时，先读项目约定名，再读官方常见名。
+func stringFromEnvAny(current string, envKeys ...string) string {
+	for _, envKey := range envKeys {
+		if val, ok := os.LookupEnv(envKey); ok {
+			trimmed := strings.TrimSpace(val)
+			if trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	return strings.TrimSpace(resolveEnvPlaceholder(current))

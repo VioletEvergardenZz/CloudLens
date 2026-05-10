@@ -23,9 +23,16 @@
   position: sticky;
   top: 0;
   overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   border-right: 1px solid #cbd5e1;
   background: #f8fafc;
   color: #1f2937;
+}
+
+.admin-sidebar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .admin-logo {
@@ -210,7 +217,7 @@ select {
 
 .asset-page {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -226,7 +233,7 @@ select {
 .resource-tree {
   min-height: calc(100vh - 110px);
   padding: 0;
-  overflow: hidden;
+  overflow: hidden auto;
 }
 
 .resource-tree-title {
@@ -253,17 +260,18 @@ select {
 
 .tree-group {
   margin-top: 0;
-  padding: 7px 8px;
+  padding: 6px 8px;
   border-top: 1px solid #eef0f3;
 }
 
 .account-branch {
   position: relative;
-  margin-left: 10px;
-  padding-left: 10px;
+  margin-left: 16px;
+  padding-left: 8px;
 }
 
-.account-branch::before {
+.account-branch::before,
+.region-branch::before {
   content: "";
   position: absolute;
   top: 3px;
@@ -271,6 +279,55 @@ select {
   left: 0;
   width: 1px;
   background: #e5e7eb;
+}
+
+.region-branch {
+  position: relative;
+  margin-left: 16px;
+  padding-left: 8px;
+}
+
+.tree-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tree-line .tree-node {
+  flex: 1 1 auto;
+}
+
+.tree-toggle {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 30px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-toggle:hover {
+  background: #f1f5f9;
+  color: #155eef;
+}
+
+.tree-caret {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+
+.tree-toggle.expanded .tree-caret {
+  transform: rotate(45deg);
 }
 
 .tree-node {
@@ -283,11 +340,12 @@ select {
   cursor: pointer;
   text-align: left;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   padding: 7px 8px;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .tree-node.root {
@@ -304,23 +362,15 @@ select {
 
 .tree-node.account {
   color: #334155;
+  font-weight: 700;
 }
 
 .tree-node.region {
   position: relative;
-  padding-left: 18px;
-  color: #6b7280;
+  min-height: 32px;
+  padding-left: 8px;
+  color: #475569;
   font-size: 12px;
-}
-
-.tree-node.region::before {
-  content: "";
-  position: absolute;
-  left: 5px;
-  top: 50%;
-  width: 8px;
-  height: 1px;
-  background: #d1d5db;
 }
 
 .tree-node:hover,
@@ -329,10 +379,25 @@ select {
   color: #155eef;
 }
 
+.tree-node.server {
+  min-height: 28px;
+  margin-left: 20px;
+  padding: 5px 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .tree-node em {
   color: #6b7280;
   font-size: 12px;
   font-style: normal;
+  flex: 0 0 auto;
+  min-width: 24px;
+  min-height: 22px;
+  border-radius: 11px;
+  background: #f1f5f9;
+  text-align: center;
+  line-height: 22px;
 }
 
 .tree-node.active em {
@@ -344,6 +409,14 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tree-node.account .tree-label,
+.tree-node.region .tree-label {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .page-main-section {
@@ -382,6 +455,115 @@ select {
   outline: none;
 }
 
+.account-config-panel {
+  border: 1px solid #d8dee6;
+  background: #ffffff;
+}
+
+.account-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+}
+
+.account-form label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.account-form label span {
+  font-weight: 700;
+}
+
+.account-form input,
+.account-form select {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #cfd6e0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1f2937;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.account-form input:focus,
+.account-form select:focus {
+  border-color: #155eef;
+  outline: none;
+}
+
+.account-form select:disabled {
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.account-form button {
+  height: 32px;
+  border: 1px solid #cfd6e0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.account-form button:hover {
+  border-color: #155eef;
+  color: #155eef;
+}
+
+.account-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.account-form button:disabled,
+.row-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.inline-check {
+  display: inline-flex !important;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: start;
+  gap: 7px !important;
+  min-height: 32px;
+}
+
+.inline-check input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.inline-message {
+  margin: 0 12px 12px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 9px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .simple-summary {
   min-height: 36px;
   border: 1px solid #d8dee6;
@@ -402,6 +584,65 @@ select {
 .table-panel {
   min-width: 0;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 #ffffff;
+}
+
+.table-panel::-webkit-scrollbar {
+  height: 8px;
+}
+
+.table-panel::-webkit-scrollbar-track {
+  background: #ffffff;
+}
+
+.table-panel::-webkit-scrollbar-thumb {
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #e2e8f0;
+  background-clip: padding-box;
+}
+
+.table-panel::-webkit-scrollbar-thumb:hover {
+  background: #cbd5e1;
+  background-clip: padding-box;
+}
+
+.table-panel::-webkit-scrollbar-corner {
+  background: #ffffff;
+}
+
+.server-list-table {
+  min-width: 1080px;
+  table-layout: fixed;
+}
+
+.server-list-table .server-col {
+  width: 18%;
+}
+
+.server-list-table .account-col {
+  width: 17%;
+}
+
+.server-list-table .region-col {
+  width: 12%;
+}
+
+.server-list-table .ip-col {
+  width: 14%;
+}
+
+.server-list-table .status-col {
+  width: 7%;
+}
+
+.server-list-table .usage-col {
+  width: 8%;
+}
+
+.server-list-table .monitor-col {
+  width: 8%;
 }
 
 .data-table,
@@ -428,6 +669,48 @@ select {
   font-weight: 700;
 }
 
+.sort-button {
+  appearance: none;
+  width: 100%;
+  min-height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sort-button:hover {
+  background: #eef4ff;
+  color: #155eef;
+}
+
+.sort-button.active {
+  background: #e8f1ff;
+  color: #155eef;
+}
+
+.sort-button span,
+.sort-button b {
+  display: inline;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1;
+}
+
+.sort-button b {
+  font-weight: 700;
+}
+
 .data-table tbody tr {
   cursor: default;
 }
@@ -450,6 +733,32 @@ select {
   margin-top: 3px;
   color: #6b7280;
   font-size: 12px;
+}
+
+.server-list-table th,
+.server-list-table td {
+  word-break: break-word;
+}
+
+.server-name-cell strong,
+.account-cell strong,
+.region-cell strong {
+  overflow-wrap: anywhere;
+}
+
+.account-cell span,
+.region-cell span,
+.monitor-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-cell .status-text {
+  max-width: 100%;
+}
+
+.monitor-cell span {
+  white-space: nowrap;
 }
 
 .status-text {
@@ -483,7 +792,8 @@ select {
 }
 
 .usage {
-  width: 92px;
+  width: 68px;
+  max-width: 100%;
   height: 22px;
   border: 1px solid #d8dee6;
   border-radius: 4px;
@@ -564,6 +874,11 @@ select {
   padding: 0 8px;
 }
 
+.link-button.danger {
+  border-color: #fecdca;
+  color: #b42318;
+}
+
 @media (max-width: 1180px) {
   .admin-console {
     grid-template-columns: 1fr;
@@ -618,6 +933,10 @@ select {
     width: 100%;
   }
 
+  .account-form {
+    grid-template-columns: 1fr;
+  }
+
   .simple-summary span {
     width: 50%;
   }
@@ -633,6 +952,7 @@ select {
 .admin-console.theme-dark .admin-header,
 .admin-console.theme-dark .resource-tree,
 .admin-console.theme-dark .page-main-section,
+.admin-console.theme-dark .account-config-panel,
 .admin-console.theme-dark .table-panel,
 .admin-console.theme-dark .detail-panel,
 .admin-console.theme-dark .settings-table {
@@ -706,12 +1026,15 @@ select {
 }
 
 .admin-console.theme-dark .account-branch::before,
-.admin-console.theme-dark .tree-node.region::before {
+.admin-console.theme-dark .region-branch::before {
   background: #475569;
 }
 
 .admin-console.theme-dark .toolbar input,
 .admin-console.theme-dark .toolbar select,
+.admin-console.theme-dark .account-form input,
+.admin-console.theme-dark .account-form select,
+.admin-console.theme-dark .account-form button,
 .admin-console.theme-dark .admin-header button,
 .admin-console.theme-dark .admin-logo button,
 .admin-console.theme-dark .toolbar button,
@@ -723,12 +1046,26 @@ select {
 
 .admin-console.theme-dark .toolbar input:focus,
 .admin-console.theme-dark .toolbar select:focus,
+.admin-console.theme-dark .account-form input:focus,
+.admin-console.theme-dark .account-form select:focus,
+.admin-console.theme-dark .account-form button:hover,
 .admin-console.theme-dark .admin-header button:hover,
 .admin-console.theme-dark .admin-logo button:hover,
 .admin-console.theme-dark .toolbar button:hover,
 .admin-console.theme-dark .link-button:hover {
   border-color: #60a5fa;
   color: #93c5fd;
+}
+
+.admin-console.theme-dark .sort-button {
+  background: transparent;
+  color: #cbd5e1;
+}
+
+.admin-console.theme-dark .sort-button:hover,
+.admin-console.theme-dark .sort-button.active {
+  background: #172554;
+  color: #bfdbfe;
 }
 
 .admin-console.theme-dark .data-table tbody tr:hover,
@@ -748,4 +1085,14 @@ select {
 .admin-console.theme-dark .status-text.muted {
   background: #1f2937;
   color: #cbd5e1;
+}
+
+.admin-console.theme-dark .account-form label {
+  color: #cbd5e1;
+}
+
+.admin-console.theme-dark .inline-message {
+  border-color: #1d4ed8;
+  background: #172554;
+  color: #bfdbfe;
 }

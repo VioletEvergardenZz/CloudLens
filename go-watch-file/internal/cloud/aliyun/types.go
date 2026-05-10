@@ -26,6 +26,8 @@ type Instance struct {
 	CPU         int      `json:"cpu"`
 	MemoryMB    int      `json:"memoryMb"`
 	PublicIPs   []string `json:"publicIps"`
+	EipAddress  string   `json:"eipAddress,omitempty"`
+	EipID       string   `json:"eipId,omitempty"`
 	PrivateIPs  []string `json:"privateIps"`
 	VpcID       string   `json:"vpcId"`
 	VSwitchID   string   `json:"vSwitchId"`

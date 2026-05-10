@@ -32,10 +32,10 @@ func NewClient(config Config) (*Client, error) {
 	config.Region = strings.TrimSpace(config.Region)
 	config.MetricPeriod = strings.TrimSpace(config.MetricPeriod)
 	if config.AccessKeyID == "" || config.AccessKeySecret == "" {
-		return nil, fmt.Errorf("阿里云 AccessKey 未配置，请设置 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET")
+		return nil, fmt.Errorf("阿里云 AccessKey 未配置，请在云账号管理中新增账号，或临时设置 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET")
 	}
 	if config.Region == "" && len(config.Regions) == 0 {
-		return nil, fmt.Errorf("阿里云地域未配置，请设置 ALIYUN_REGION 或 ALIYUN_REGIONS")
+		return nil, fmt.Errorf("阿里云地域未配置，请在云账号管理中填写地域，或临时设置 ALIYUN_REGION/ALIYUN_REGIONS")
 	}
 	if config.MetricPeriod == "" {
 		config.MetricPeriod = "60"
@@ -90,10 +90,14 @@ func (c *Client) listRegionInstances(region string) ([]Instance, error) {
 }
 
 func (c *Client) Metric(metricName, instanceID, region string, minutes int, period string) (*MetricSeries, error) {
+	return c.MetricWithDimensions(metricName, map[string]string{"instanceId": strings.TrimSpace(instanceID)}, region, minutes, period)
+}
+
+func (c *Client) MetricWithDimensions(metricName string, dimensions map[string]string, region string, minutes int, period string) (*MetricSeries, error) {
 	if c == nil {
 		return nil, fmt.Errorf("阿里云客户端未初始化")
 	}
-	instanceID = strings.TrimSpace(instanceID)
+	instanceID := strings.TrimSpace(dimensions["instanceId"])
 	if instanceID == "" {
 		return nil, fmt.Errorf("instanceId 不能为空")
 	}
@@ -127,7 +131,7 @@ func (c *Client) Metric(metricName, instanceID, region string, minutes int, peri
 	req.Period = period
 	req.StartTime = strconv.FormatInt(start.UnixMilli(), 10)
 	req.EndTime = strconv.FormatInt(end.UnixMilli(), 10)
-	req.Dimensions = fmt.Sprintf(`[{"instanceId":%q}]`, instanceID)
+	req.Dimensions = metricDimensionsJSON(dimensions)
 	resp, err := client.DescribeMetricList(req)
 	if err != nil {
 		return nil, fmt.Errorf("查询云监控指标失败 region=%s instance=%s metric=%s: %w", region, instanceID, metricName, err)
@@ -149,8 +153,136 @@ func (c *Client) Metric(metricName, instanceID, region string, minutes int, peri
 	}, nil
 }
 
+func (c *Client) InstanceMonitorMetrics(instanceID, region string, minutes int, period string) (map[string]*MetricSeries, error) {
+	if c == nil {
+		return nil, fmt.Errorf("阿里云客户端未初始化")
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return nil, fmt.Errorf("instanceId 不能为空")
+	}
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = c.config.Region
+	}
+	if region == "" {
+		return nil, fmt.Errorf("查询 ECS 基础监控必须指定 region")
+	}
+	periodSeconds := parsePositiveInt(firstNonEmpty(period, c.config.MetricPeriod), 60)
+	if minutes <= 0 || minutes > 24*60 {
+		minutes = 30
+	}
+	client, err := ecs.NewClientWithAccessKey(region, c.config.AccessKeyID, c.config.AccessKeySecret)
+	if err != nil {
+		return nil, fmt.Errorf("创建 ECS 只读客户端失败: %w", err)
+	}
+	end := time.Now().UTC()
+	start := end.Add(-time.Duration(minutes) * time.Minute)
+	req := ecs.CreateDescribeInstanceMonitorDataRequest()
+	req.InstanceId = instanceID
+	req.Period = requests.Integer(strconv.Itoa(periodSeconds))
+	req.StartTime = start.Format(time.RFC3339)
+	req.EndTime = end.Format(time.RFC3339)
+	resp, err := client.DescribeInstanceMonitorData(req)
+	if err != nil {
+		return nil, fmt.Errorf("查询 ECS 基础监控失败 region=%s instance=%s: %w", region, instanceID, err)
+	}
+	items := append([]ecs.InstanceMonitorData{}, resp.MonitorData.InstanceMonitorData...)
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TimeStamp < items[j].TimeStamp
+	})
+	out := map[string]*MetricSeries{
+		"cpu":               newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.CPU", period),
+		"internetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetRX", period),
+		"internetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetTX", period),
+		"intranetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetRX", period),
+		"intranetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetTX", period),
+		"internetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetBandwidth", period),
+		"intranetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetBandwidth", period),
+		"diskReadBps":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSRead", period),
+		"diskWriteBps":      newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSWrite", period),
+	}
+	for _, item := range items {
+		timestamp := parseAliyunTimeMillis(item.TimeStamp)
+		if timestamp == 0 {
+			continue
+		}
+		appendMetricPoint(out["cpu"], timestamp, float64(item.CPU))
+		appendMetricPoint(out["internetIn"], timestamp, trafficKbitToBitRate(item.InternetRX, periodSeconds))
+		appendMetricPoint(out["internetOut"], timestamp, trafficKbitToBitRate(item.InternetTX, periodSeconds))
+		appendMetricPoint(out["intranetIn"], timestamp, trafficKbitToBitRate(item.IntranetRX, periodSeconds))
+		appendMetricPoint(out["intranetOut"], timestamp, trafficKbitToBitRate(item.IntranetTX, periodSeconds))
+		appendMetricPoint(out["internetBandwidth"], timestamp, float64(item.InternetBandwidth*1000))
+		appendMetricPoint(out["intranetBandwidth"], timestamp, float64(item.IntranetBandwidth*1000))
+		appendMetricPoint(out["diskReadBps"], timestamp, float64(item.BPSRead))
+		appendMetricPoint(out["diskWriteBps"], timestamp, float64(item.BPSWrite))
+	}
+	return out, nil
+}
+
+func newMetricSeries(instanceID, region, metricName, period string) *MetricSeries {
+	return &MetricSeries{
+		InstanceID: instanceID,
+		RegionID:   region,
+		Namespace:  "acs_ecs",
+		MetricName: metricName,
+		Period:     period,
+		Points:     []MetricPoint{},
+	}
+}
+
+func appendMetricPoint(series *MetricSeries, timestamp int64, value float64) {
+	if series == nil {
+		return
+	}
+	series.Points = append(series.Points, MetricPoint{Timestamp: timestamp, Value: value})
+}
+
+func trafficKbitToBitRate(valueKbit int, periodSeconds int) float64 {
+	if periodSeconds <= 0 {
+		periodSeconds = 60
+	}
+	return float64(valueKbit*1000) / float64(periodSeconds)
+}
+
+func parseAliyunTimeMillis(raw string) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z"} {
+		parsed, err := time.Parse(layout, raw)
+		if err == nil {
+			return parsed.UnixMilli()
+		}
+	}
+	return 0
+}
+
+func metricDimensionsJSON(dimensions map[string]string) string {
+	cleaned := make(map[string]string, len(dimensions))
+	for key, value := range dimensions {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		cleaned[key] = value
+	}
+	if len(cleaned) == 0 {
+		return "[]"
+	}
+	raw, err := json.Marshal([]map[string]string{cleaned})
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
 func mapInstance(item ecs.Instance, fallbackRegion string) Instance {
 	region := firstNonEmpty(item.RegionId, fallbackRegion)
+	publicIPs := compactStrings(append([]string{}, item.PublicIpAddress.IpAddress...))
+	eipAddress := strings.TrimSpace(item.EipAddress.IpAddress)
 	return Instance{
 		ID:          item.InstanceId,
 		Name:        firstNonEmpty(item.InstanceName, item.HostName, item.Hostname, item.InstanceId),
@@ -164,7 +296,9 @@ func mapInstance(item ecs.Instance, fallbackRegion string) Instance {
 		Type:        item.InstanceType,
 		CPU:         firstPositive(item.CPU, item.Cpu),
 		MemoryMB:    item.Memory,
-		PublicIPs:   compactStrings(append([]string{}, item.PublicIpAddress.IpAddress...)),
+		PublicIPs:   publicIPs,
+		EipAddress:  eipAddress,
+		EipID:       strings.TrimSpace(item.EipAddress.AllocationId),
 		PrivateIPs:  compactStrings(append([]string{}, item.VpcAttributes.PrivateIpAddress.IpAddress...)),
 		VpcID:       item.VpcAttributes.VpcId,
 		VSwitchID:   item.VpcAttributes.VSwitchId,
@@ -249,6 +383,14 @@ func firstPositive(values ...int) int {
 		}
 	}
 	return 0
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func firstMetricValue(record map[string]any) float64 {

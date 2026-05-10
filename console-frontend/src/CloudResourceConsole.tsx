@@ -6,7 +6,8 @@
 
 /* 本文件用于普通后台 Web 页面，融合 Komari 的探针监控视角和 GWF 的闭环能力 */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE, USE_MOCK, buildApiHeaders } from "./console/dashboardApi";
 import "./CloudResourceConsole.css";
 
 type PageKey =
@@ -25,9 +26,12 @@ type PageKey =
 type Provider = "aliyun" | "huawei" | "tencent";
 type AccountStatus = "normal" | "warning" | "syncing" | "disabled";
 type ServerStatus = "running" | "warning" | "offline" | "maintenance";
-type AgentStatus = "online" | "stale" | "missing";
+type AgentStatus = "online" | "stale" | "missing" | "offline";
 type ScopeKind = "all" | "provider" | "account" | "accountRegion" | "region";
 type ThemeMode = "light" | "dark";
+type PublicIpType = "public" | "eip" | "none";
+type MetricSortKey = "cpu" | "memory" | "disk";
+type SortDirection = "asc" | "desc";
 
 type CloudAccount = {
   id: string;
@@ -40,6 +44,9 @@ type CloudAccount = {
   status: AccountStatus;
   lastSync: string;
   regions: string[];
+  enabled?: boolean;
+  metricPeriod?: string;
+  checkMessage?: string;
 };
 
 type CloudServer = {
@@ -52,6 +59,8 @@ type CloudServer = {
   name: string;
   business: string;
   publicIp: string;
+  publicIpType?: PublicIpType;
+  publicIpId?: string;
   privateIp: string;
   os: string;
   spec: string;
@@ -88,14 +97,181 @@ type SyncTask = {
   updatedAt: string;
 };
 
+type AliyunInstance = {
+  id: string;
+  name: string;
+  hostName: string;
+  provider: "aliyun";
+  regionId: string;
+  zoneId: string;
+  status: string;
+  osName: string;
+  osType: string;
+  type: string;
+  cpu: number;
+  memoryMb: number;
+  publicIps: string[];
+  eipAddress?: string;
+  eipId?: string;
+  privateIps: string[];
+  vpcId: string;
+  vSwitchId: string;
+  securityGroupIds: string[];
+  createdAt: string;
+  expiredAt: string;
+};
+
+type AliyunInstancesResponse = {
+  ok?: boolean;
+  accountId?: number;
+  provider?: string;
+  items?: AliyunInstance[];
+  total?: number;
+  error?: string;
+};
+
+type AliyunMetricPoint = {
+  timestamp: number;
+  value: number;
+  raw?: Record<string, unknown>;
+};
+
+type AliyunMetricSeries = {
+  namespace?: string;
+  metricName: string;
+  period?: string;
+  points?: AliyunMetricPoint[];
+};
+
+type AliyunOverviewResponse = {
+  ok?: boolean;
+  accountId?: number;
+  status?: string;
+  message?: string;
+  availableMetricCount?: number;
+  metrics?: Record<string, AliyunMetricSeries>;
+  errors?: Record<string, string>;
+  error?: string;
+};
+
+type ApiCloudAccount = {
+  id: number;
+  provider: "aliyun";
+  name: string;
+  accessKeyIdMasked: string;
+  regions: string[];
+  metricPeriod: string;
+  enabled: boolean;
+  lastCheckStatus?: string;
+  lastCheckMessage?: string;
+  lastCheckedAt?: string;
+};
+
+type CloudAccountsResponse = {
+  ok?: boolean;
+  items?: ApiCloudAccount[];
+  error?: string;
+};
+
+type CloudAccountCheck = {
+  name: string;
+  status: string;
+  ok: boolean;
+  message: string;
+};
+
+type CloudAccountTestResponse = {
+  ok?: boolean;
+  account?: ApiCloudAccount;
+  checks?: CloudAccountCheck[];
+  error?: string;
+};
+
+type CloudAccountForm = {
+  providerName: string;
+  name: string;
+  accessKeyId: string;
+  accessKeySecret: string;
+  regions: string;
+  metricPeriod: string;
+  enabled: boolean;
+};
+
+type MonitorMetricKey =
+  | "cpu"
+  | "memory"
+  | "disk"
+  | "load1m"
+  | "internetIn"
+  | "internetOut"
+  | "internetTotal"
+  | "internetBandwidth"
+  | "intranetIn"
+  | "intranetOut"
+  | "intranetTotal"
+  | "intranetBandwidth"
+  | "networkTotal"
+  | "diskReadBps"
+  | "diskWriteBps";
+
+type MonitorMetric = {
+  key: MonitorMetricKey;
+  label: string;
+  unit: string;
+  value: string;
+  metricName: string;
+  points: number;
+  status: "ok" | "empty" | "error";
+  note: string;
+};
+
 const providerLabels: Record<Provider, string> = {
   aliyun: "阿里云",
   huawei: "华为云",
   tencent: "腾讯云",
 };
 
+const emptyCloudServer: CloudServer = {
+  id: "",
+  accountId: "aliyun-runtime",
+  provider: "aliyun",
+  region: "--",
+  zone: "--",
+  instanceId: "--",
+  name: "--",
+  business: "未选择服务器",
+  publicIp: "--",
+  publicIpType: "none",
+  privateIp: "--",
+  os: "--",
+  spec: "--",
+  status: "maintenance",
+  agentStatus: "missing",
+  cpu: 0,
+  memory: 0,
+  disk: 0,
+  load: "--",
+  uptime: "--",
+  lastSeen: "--",
+  alerts: 0,
+  files: 0,
+  ai: 0,
+  kb: 0,
+};
+
 const SIDEBAR_STORAGE_KEY = "gwf-cloud-sidebar-hidden";
 const THEME_STORAGE_KEY = "gwf-cloud-theme";
+const ASSET_REFRESH_INTERVAL_MS = 30_000;
+
+const emptyAccountForm: CloudAccountForm = {
+  providerName: "阿里云 ECS",
+  name: "",
+  accessKeyId: "",
+  accessKeySecret: "",
+  regions: "cn-hangzhou",
+  metricPeriod: "60",
+  enabled: true,
+};
 
 const resolveInitialSidebarHidden = () => {
   if (typeof window === "undefined") return false;
@@ -125,9 +301,10 @@ const serverStatusLabels: Record<ServerStatus, string> = {
 };
 
 const agentStatusLabels: Record<AgentStatus, string> = {
-  online: "在线",
-  stale: "心跳过期",
-  missing: "未接入",
+  online: "正常",
+  stale: "数据异常",
+  missing: "未同步",
+  offline: "离线",
 };
 
 const menuGroups: Array<{
@@ -167,7 +344,7 @@ const menuGroups: Array<{
   },
 ];
 
-const accounts: CloudAccount[] = [
+const mockAccounts: CloudAccount[] = [
   {
     id: "aliyun-prod-cn",
     provider: "aliyun",
@@ -230,7 +407,7 @@ const accounts: CloudAccount[] = [
   },
 ];
 
-const servers: CloudServer[] = [
+const mockServers: CloudServer[] = [
   {
     id: "ecs-order-01",
     accountId: "aliyun-prod-cn",
@@ -349,7 +526,7 @@ const servers: CloudServer[] = [
     os: "Alibaba Cloud Linux 3",
     spec: "2C4G",
     status: "offline",
-    agentStatus: "stale",
+    agentStatus: "offline",
     cpu: 0,
     memory: 0,
     disk: 52,
@@ -550,9 +727,337 @@ const syncTasks: SyncTask[] = [
   },
 ];
 
-const getAccount = (accountId: string) => accounts.find((account) => account.id === accountId);
+const getAliyunStatus = (status: string): ServerStatus => {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "running") return "running";
+  if (normalized === "stopped" || normalized === "deleted") return "offline";
+  if (normalized === "starting" || normalized === "stopping") return "maintenance";
+  return "warning";
+};
 
-const getServer = (serverId: string) => servers.find((server) => server.id === serverId);
+const latestMetricValue = (points?: AliyunMetricPoint[]) => {
+  if (!points?.length) return 0;
+  const latest = [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
+  return Math.max(0, Math.min(100, Math.round(latest?.value ?? 0)));
+};
+
+const latestRawMetricValue = (points?: AliyunMetricPoint[]) => {
+  if (!points?.length) return 0;
+  const latest = [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
+  return latest?.value ?? 0;
+};
+
+const formatUptimeFromCreatedAt = (createdAt: string, status: string) => {
+  if (status.trim().toLowerCase() !== "running") return "--";
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return "--";
+  const diffMs = Date.now() - created.getTime();
+  if (diffMs <= 0) return "--";
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days > 0) return `${days} 天`;
+  const hours = Math.floor(diffMs / 3_600_000);
+  if (hours > 0) return `${hours} 小时`;
+  const minutes = Math.max(1, Math.floor(diffMs / 60_000));
+  return `${minutes} 分钟`;
+};
+
+const formatMemorySpec = (memoryMb: number) => {
+  if (!memoryMb || memoryMb <= 0) return "内存未知";
+  if (memoryMb >= 1024) return `${Math.round(memoryMb / 1024)}G`;
+  return `${memoryMb}M`;
+};
+
+const resolvePublicIp = (instance: AliyunInstance): Pick<CloudServer, "publicIp" | "publicIpType" | "publicIpId"> => {
+  const eipAddress = instance.eipAddress?.trim();
+  if (eipAddress) {
+    return { publicIp: eipAddress, publicIpType: "eip", publicIpId: instance.eipId?.trim() || "" };
+  }
+  const publicIp = instance.publicIps?.find((ip) => ip.trim())?.trim();
+  if (publicIp) {
+    return { publicIp, publicIpType: "public", publicIpId: "" };
+  }
+  return { publicIp: "-", publicIpType: "none", publicIpId: "" };
+};
+
+const publicIpLabel = (server: CloudServer) => (server.publicIpType === "eip" ? "弹性公网 IP" : "公网");
+
+const metricSortLabels: Record<MetricSortKey, string> = {
+  cpu: "CPU",
+  memory: "内存",
+  disk: "磁盘",
+};
+
+const sortServersByMetric = (
+  rows: CloudServer[],
+  metricSort: { key: MetricSortKey; direction: SortDirection } | null
+) => {
+  if (!metricSort) return rows;
+  return [...rows].sort((left, right) => {
+    const result = left[metricSort.key] - right[metricSort.key];
+    return metricSort.direction === "asc" ? result : -result;
+  });
+};
+
+const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
+  const status = !account.enabled
+    ? "disabled"
+    : account.lastCheckStatus === "ok"
+      ? "normal"
+      : account.lastCheckStatus
+        ? "warning"
+        : "syncing";
+  return {
+    id: String(account.id),
+    provider: "aliyun",
+    name: account.name,
+    alias: `阿里云 / ${account.name}`,
+    uid: account.accessKeyIdMasked || "--",
+    owner: "控制台配置",
+    env: account.enabled ? "ECS 监控" : "已停用",
+    status,
+    lastSync: formatDisplayTime(account.lastCheckedAt),
+    regions: account.regions ?? [],
+    enabled: account.enabled,
+    metricPeriod: account.metricPeriod || "60",
+    checkMessage: account.lastCheckMessage || "",
+  };
+};
+
+const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overview?: AliyunOverviewResponse): CloudServer => {
+  const cpuSpec = instance.cpu > 0 ? `${instance.cpu}C` : "CPU未知";
+  const serverStatus = getAliyunStatus(instance.status);
+  const cpuUsage = latestMetricValue(overview?.metrics?.cpu?.points);
+  const memoryUsage = latestMetricValue(overview?.metrics?.memory?.points);
+  const diskUsage = latestMetricValue(overview?.metrics?.disk?.points);
+  const load1m = latestRawMetricValue(overview?.metrics?.load1m?.points);
+  const publicIpInfo = resolvePublicIp(instance);
+  const cloudMonitorStatus: AgentStatus = serverStatus === "offline"
+    ? "offline"
+    : overview?.availableMetricCount
+      ? "online"
+      : overview?.status === "metric_error" || overview?.error
+        ? "stale"
+        : "missing";
+  const lastSeen = serverStatus === "offline"
+    ? "实例已离线，探针不可用"
+    : overview?.message || (overview?.availableMetricCount ? "云监控已同步" : "等待云监控数据");
+  return {
+    id: `${account.id}:${instance.id}`,
+    accountId: account.id,
+    provider: "aliyun",
+    region: instance.regionId || "--",
+    zone: instance.zoneId || "--",
+    instanceId: instance.id,
+    name: instance.name || instance.hostName || instance.id,
+    business: "阿里云 ECS",
+    ...publicIpInfo,
+    privateIp: instance.privateIps?.[0] ?? "-",
+    os: instance.osName || instance.osType || "--",
+    spec: `${cpuSpec}${formatMemorySpec(instance.memoryMb)}`,
+    status: serverStatus,
+    agentStatus: cloudMonitorStatus,
+    cpu: cpuUsage,
+    memory: memoryUsage,
+    disk: diskUsage,
+    load: load1m > 0 ? load1m.toFixed(2) : "--",
+    uptime: formatUptimeFromCreatedAt(instance.createdAt, instance.status),
+    lastSeen,
+    alerts: 0,
+    files: 0,
+    ai: 0,
+    kb: 0,
+  };
+};
+
+const monitorMetricMeta: Array<{ key: MonitorMetricKey; label: string; unit: string }> = [
+  { key: "cpu", label: "CPU", unit: "%" },
+  { key: "memory", label: "内存", unit: "%" },
+  { key: "disk", label: "磁盘", unit: "%" },
+  { key: "load1m", label: "1 分钟负载", unit: "" },
+  { key: "internetIn", label: "公网入", unit: "B/s" },
+  { key: "internetOut", label: "公网出", unit: "B/s" },
+  { key: "internetTotal", label: "公网总带宽", unit: "B/s" },
+  { key: "internetBandwidth", label: "公网带宽", unit: "bit/s" },
+  { key: "intranetIn", label: "内网入", unit: "B/s" },
+  { key: "intranetOut", label: "内网出", unit: "B/s" },
+  { key: "intranetTotal", label: "内网总带宽", unit: "B/s" },
+  { key: "intranetBandwidth", label: "内网带宽", unit: "bit/s" },
+  { key: "networkTotal", label: "总带宽", unit: "B/s" },
+  { key: "diskReadBps", label: "磁盘读速率", unit: "B/s" },
+  { key: "diskWriteBps", label: "磁盘写速率", unit: "B/s" },
+];
+
+const formatRateValue = (value: number, unit: "bit/s" | "B/s") => {
+  if (unit === "bit/s") {
+    if (value >= 1000 * 1000) return `${(value / 1000 / 1000).toFixed(2)} Mbit/s`;
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} Kbit/s`;
+    return `${value.toFixed(2)} bit/s`;
+  }
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(2)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(2)} KB/s`;
+  return `${value.toFixed(2)} B/s`;
+};
+
+const formatMetricValue = (key: MonitorMetricKey, value: number) => {
+  if (key === "cpu" || key === "memory" || key === "disk") {
+    return `${value.toFixed(2)}%`;
+  }
+  if (key === "load1m") return value.toFixed(2);
+  if (key === "diskReadBps" || key === "diskWriteBps") return formatRateValue(value, "B/s");
+  return formatRateValue(value, "bit/s");
+};
+
+const latestPoint = (points?: AliyunMetricPoint[]) => {
+  if (!points?.length) return undefined;
+  return [...points].sort((left, right) => left.timestamp - right.timestamp).at(-1);
+};
+
+const hasMetricPoint = (series?: AliyunMetricSeries) => Boolean(latestPoint(series?.points));
+
+const mergeServerRowsWithPrevious = (
+  freshRows: CloudServer[],
+  previousRows: CloudServer[],
+  overviewMap: Record<string, AliyunOverviewResponse>
+) => {
+  const previousMap = new Map(previousRows.map((server) => [server.id, server]));
+  return freshRows.map((server) => {
+    const previous = previousMap.get(server.id);
+    if (!previous || server.status === "offline") return server;
+
+    const metrics = overviewMap[server.id]?.metrics ?? {};
+    const next = { ...server };
+    let reusedPreviousMetric = false;
+
+    if (!hasMetricPoint(metrics.cpu) && previous.cpu > 0) {
+      next.cpu = previous.cpu;
+      reusedPreviousMetric = true;
+    }
+    if (!hasMetricPoint(metrics.memory) && previous.memory > 0) {
+      next.memory = previous.memory;
+      reusedPreviousMetric = true;
+    }
+    if (!hasMetricPoint(metrics.disk) && previous.disk > 0) {
+      next.disk = previous.disk;
+      reusedPreviousMetric = true;
+    }
+    if (!hasMetricPoint(metrics.load1m) && previous.load !== "--") {
+      next.load = previous.load;
+      reusedPreviousMetric = true;
+    }
+    if (reusedPreviousMetric && server.agentStatus === "missing") {
+      next.agentStatus = previous.agentStatus === "online" ? "stale" : previous.agentStatus;
+      next.lastSeen = "本轮暂未返回新采样，沿用上一轮监控值";
+    }
+    return next;
+  });
+};
+
+const hasAnyMetricPoint = (overview?: AliyunOverviewResponse) =>
+  Object.values(overview?.metrics ?? {}).some((series) => hasMetricPoint(series));
+
+const mergeOverviewMapWithPrevious = (
+  freshMap: Record<string, AliyunOverviewResponse>,
+  previousMap: Record<string, AliyunOverviewResponse>,
+  freshRows: CloudServer[]
+) => {
+  const rowMap = new Map(freshRows.map((server) => [server.id, server]));
+  return Object.fromEntries(
+    Object.entries(freshMap).map(([serverId, overview]) => {
+      const server = rowMap.get(serverId);
+      const previous = previousMap[serverId];
+      if (server?.status === "offline" || !previous) return [serverId, overview];
+      if (hasAnyMetricPoint(overview) || !hasAnyMetricPoint(previous)) return [serverId, overview];
+      return [
+        serverId,
+        {
+          ...overview,
+          ok: previous.ok,
+          status: previous.status,
+          message: "本轮暂未返回新采样，沿用上一轮监控值",
+          availableMetricCount: previous.availableMetricCount,
+          metrics: previous.metrics,
+          errors: overview.errors,
+        },
+      ];
+    })
+  );
+};
+
+const buildDerivedSeries = (metricName: string, seriesList: Array<AliyunMetricSeries | undefined>): AliyunMetricSeries | undefined => {
+  const latestPoints = seriesList.map((series) => latestPoint(series?.points));
+  if (latestPoints.some((point) => !point)) return undefined;
+  const timestamp = Math.max(...latestPoints.map((point) => point?.timestamp ?? 0));
+  const value = latestPoints.reduce((total, point) => total + (point?.value ?? 0), 0);
+  return { namespace: "derived", metricName, points: [{ timestamp, value }] };
+};
+
+const derivedMetricKeys = new Set<MonitorMetricKey>(["internetTotal", "intranetTotal", "networkTotal"]);
+
+const pluginMetricKeys = new Set<MonitorMetricKey>(["memory", "disk", "load1m"]);
+
+const formatMetricTime = (timestamp?: number) => {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("zh-CN", { hour12: false });
+};
+
+const metricSourceLabel = (series?: AliyunMetricSeries) => {
+  const namespace = series?.namespace ?? "";
+  const metricName = series?.metricName ?? "";
+  if (namespace === "derived") return "本页面计算";
+  if (metricName.startsWith("ecs.DescribeInstanceMonitorData.")) return "ECS 基础监控";
+  if (metricName.startsWith("VPC_PublicIP_")) return "弹性公网 IP 云监控";
+  if (namespace === "acs_ecs_dashboard") return "云监控 ECS 指标";
+  return namespace || "未知来源";
+};
+
+const buildMetricNote = (
+  item: { key: MonitorMetricKey },
+  latest: AliyunMetricPoint | undefined,
+  series: AliyunMetricSeries | undefined,
+  error?: string
+) => {
+  const source = metricSourceLabel(series);
+  const latestTime = formatMetricTime(latest?.timestamp);
+  const period = series?.period ? `，周期 ${series.period}s` : "";
+  if (latest) {
+    return `${source}${period}${latestTime ? `，最新采样 ${latestTime}` : ""}`;
+  }
+  if (error) return error;
+  if (derivedMetricKeys.has(item.key)) return "依赖的入/出方向指标没有同时返回";
+  if (pluginMetricKeys.has(item.key)) return "ECS 基础监控不包含该项，需云监控插件或 Agent 上报";
+  if (series) return `${source}${period}，接口返回成功但没有采样点`;
+  return "阿里云未返回该指标";
+};
+
+const buildMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => {
+  const metrics: Record<string, AliyunMetricSeries | undefined> = {
+    ...(payload?.metrics ?? {}),
+  };
+  metrics.internetTotal = buildDerivedSeries("InternetInRate + InternetOutRate", [metrics.internetIn, metrics.internetOut]);
+  metrics.intranetTotal = buildDerivedSeries("IntranetInRate + IntranetOutRate", [metrics.intranetIn, metrics.intranetOut]);
+  metrics.networkTotal = buildDerivedSeries("公网 + 内网总带宽", [
+    metrics.internetIn,
+    metrics.internetOut,
+    metrics.intranetIn,
+    metrics.intranetOut,
+  ]);
+  return monitorMetricMeta.map((item) => {
+    const series = metrics[item.key];
+    const points = series?.points ?? [];
+    const latest = latestPoint(points);
+    const error = payload?.errors?.[item.key];
+    return {
+      ...item,
+      value: latest ? formatMetricValue(item.key, latest.value) : "--",
+      metricName: series?.metricName ?? "--",
+      points: points.length,
+      status: latest ? "ok" : error ? "error" : "empty",
+      note: buildMetricNote(item, latest, series, error),
+    };
+  });
+};
 
 const buildScopeKey = (kind: ScopeKind, value = "") => `${kind}:${value}`;
 
@@ -562,6 +1067,27 @@ const parseScope = (scope: string): { kind: ScopeKind; value: string } => {
     return { kind, value: rest.join(":") };
   }
   return { kind: "all", value: "" };
+};
+
+const serverMatchesScope = (server: CloudServer, parsedScope: { kind: ScopeKind; value: string }) => {
+  if (parsedScope.kind === "provider") return server.provider === parsedScope.value;
+  if (parsedScope.kind === "account") return server.accountId === parsedScope.value;
+  if (parsedScope.kind === "accountRegion") return `${server.accountId}:${server.region}` === parsedScope.value;
+  if (parsedScope.kind === "region") return `${server.provider}:${server.region}` === parsedScope.value;
+  return true;
+};
+
+const splitFormList = (raw: string) =>
+  raw
+    .split(/[,;\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const formatDisplayTime = (raw?: string) => {
+  if (!raw) return "--";
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleString("zh-CN", { hour12: false });
 };
 
 const getStatusClass = (status: ServerStatus | AgentStatus | AccountStatus | OperationEvent["level"] | SyncTask["status"]) => {
@@ -595,6 +1121,11 @@ function Utilization({ value }: { value: number }) {
 
 export function CloudResourceConsole() {
   const [activePage, setActivePage] = useState<PageKey>("servers");
+  const [accounts, setAccounts] = useState<CloudAccount[]>(() => (USE_MOCK ? mockAccounts : []));
+  const [servers, setServers] = useState<CloudServer[]>(() => (USE_MOCK ? mockServers : []));
+  const [assetLoading, setAssetLoading] = useState(!USE_MOCK);
+  const [assetError, setAssetError] = useState("");
+  const [lastSyncAt, setLastSyncAt] = useState("--");
   const [scope, setScope] = useState(buildScopeKey("all"));
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<ServerStatus | "all">("all");
@@ -602,6 +1133,15 @@ export function CloudResourceConsole() {
   const [selectedServerId, setSelectedServerId] = useState(servers[0]?.id ?? "");
   const [sidebarHidden, setSidebarHidden] = useState(() => resolveInitialSidebarHidden());
   const [theme, setTheme] = useState<ThemeMode>(() => resolveInitialTheme());
+  const [overviewByServerId, setOverviewByServerId] = useState<Record<string, AliyunOverviewResponse>>({});
+  const [accountForm, setAccountForm] = useState<CloudAccountForm>(emptyAccountForm);
+  const [editingAccountId, setEditingAccountId] = useState("");
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [testingAccountId, setTestingAccountId] = useState("");
+  const [accountNotice, setAccountNotice] = useState("");
+  const [expandedTree, setExpandedTree] = useState<Record<string, boolean>>({});
+  const [metricSort, setMetricSort] = useState<{ key: MetricSortKey; direction: SortDirection } | null>(null);
+  const assetLoadingRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -613,15 +1153,246 @@ export function CloudResourceConsole() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  const loadCloudAssets = async (options: { silent?: boolean } = {}) => {
+    if (assetLoadingRef.current) return;
+    assetLoadingRef.current = true;
+    if (USE_MOCK) {
+      setAssetLoading(false);
+      setLastSyncAt("示例模式");
+      assetLoadingRef.current = false;
+      return;
+    }
+    if (!options.silent) setAssetLoading(true);
+    setAssetError("");
+    try {
+      const accountResp = await fetch(`${API_BASE}/api/cloud/accounts`, {
+        cache: "no-store",
+        headers: buildApiHeaders(),
+      });
+      const accountPayload = (await accountResp.json().catch(() => ({}))) as CloudAccountsResponse;
+      if (!accountResp.ok) {
+        throw new Error(accountPayload.error || `云账号接口返回 ${accountResp.status}`);
+      }
+      const apiAccounts = accountPayload.items ?? [];
+      const mappedAccounts = apiAccounts.map(mapApiCloudAccount);
+      setAccounts(mappedAccounts);
+      if (!mappedAccounts.length) {
+        setServers([]);
+        setOverviewByServerId({});
+        setSelectedServerId("");
+        setLastSyncAt("等待配置云账号");
+        return;
+      }
+
+      const overviewMap: Record<string, AliyunOverviewResponse> = {};
+      const errors: string[] = [];
+      const accountResults = await Promise.allSettled(
+        mappedAccounts
+          .filter((account) => account.enabled !== false)
+          .map(async (account) => {
+            const resp = await fetch(`${API_BASE}/api/cloud/aliyun/instances?accountId=${encodeURIComponent(account.id)}`, {
+              cache: "no-store",
+              headers: buildApiHeaders(),
+            });
+            const payload = (await resp.json().catch(() => ({}))) as AliyunInstancesResponse;
+            if (!resp.ok) {
+              throw new Error(`${account.name}: ${payload.error || `ECS 接口返回 ${resp.status}`}`);
+            }
+            const instances = payload.items ?? [];
+            const rows = await Promise.all(
+              instances.map(async (instance) => {
+                const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
+                const overviewResp = await fetch(
+                  `${API_BASE}/api/cloud/aliyun/overview?accountId=${encodeURIComponent(account.id)}&instanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}&publicIp=${encodeURIComponent(publicIp)}`,
+                  { cache: "no-store", headers: buildApiHeaders() }
+                );
+                const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
+                const server = mapAliyunServer(account, instance, overviewResp.ok ? overview : undefined);
+                if (overviewResp.ok) {
+                  overviewMap[server.id] = overview;
+                } else {
+                  overviewMap[server.id] = { ok: false, error: overview.error || "监控数据读取失败" };
+                }
+                return server;
+              })
+            );
+            return rows;
+          })
+      );
+      const rows = accountResults.flatMap((result) => {
+        if (result.status === "fulfilled") return result.value;
+        errors.push(result.reason instanceof Error ? result.reason.message : "云资源同步失败");
+        return [];
+      });
+      setOverviewByServerId((current) => mergeOverviewMapWithPrevious(overviewMap, current, rows));
+      setServers((current) => mergeServerRowsWithPrevious(rows, current, overviewMap));
+      setSelectedServerId((current) => (rows.some((server) => server.id === current) ? current : rows[0]?.id ?? ""));
+      setLastSyncAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
+      if (errors.length) {
+        setAssetError(errors.join("；"));
+      }
+    } catch (error) {
+      setAssetError(error instanceof Error ? error.message : "云资源同步失败");
+    } finally {
+      assetLoadingRef.current = false;
+      if (!options.silent) setAssetLoading(false);
+    }
+  };
+
+  const saveAccount = async () => {
+    if (USE_MOCK) return;
+    const regions = splitFormList(accountForm.regions);
+    if (!accountForm.name.trim() || !regions.length) {
+      setAccountNotice("请填写账号名称和地域");
+      return;
+    }
+    if (!editingAccountId && (!accountForm.accessKeyId.trim() || !accountForm.accessKeySecret.trim())) {
+      setAccountNotice("新增账号需要填写 AccessKey ID 和 Secret");
+      return;
+    }
+    setAccountSaving(true);
+    setAccountNotice("");
+    try {
+      const endpoint = editingAccountId
+        ? `${API_BASE}/api/cloud/accounts/${encodeURIComponent(editingAccountId)}`
+        : `${API_BASE}/api/cloud/accounts`;
+      const resp = await fetch(endpoint, {
+        method: editingAccountId ? "PUT" : "POST",
+        headers: buildApiHeaders(true),
+        body: JSON.stringify({
+          provider: "aliyun",
+          name: accountForm.name.trim(),
+          accessKeyId: accountForm.accessKeyId.trim(),
+          accessKeySecret: accountForm.accessKeySecret.trim(),
+          regions,
+          metricPeriod: accountForm.metricPeriod.trim() || "60",
+          enabled: accountForm.enabled,
+        }),
+      });
+      const payload = (await resp.json().catch(() => ({}))) as { error?: string };
+      if (!resp.ok) {
+        throw new Error(payload.error || `保存云账号失败 ${resp.status}`);
+      }
+      setAccountForm(emptyAccountForm);
+      setEditingAccountId("");
+      setAccountNotice(editingAccountId ? "账号已更新" : "账号已保存");
+      await loadCloudAssets();
+    } catch (error) {
+      setAccountNotice(error instanceof Error ? error.message : "保存云账号失败");
+    } finally {
+      setAccountSaving(false);
+    }
+  };
+
+  const testAccount = async (accountId: string) => {
+    if (USE_MOCK) return;
+    setTestingAccountId(accountId);
+    setAccountNotice("");
+    try {
+      const resp = await fetch(`${API_BASE}/api/cloud/accounts/${encodeURIComponent(accountId)}/test`, {
+        method: "POST",
+        headers: buildApiHeaders(),
+      });
+      const payload = (await resp.json().catch(() => ({}))) as CloudAccountTestResponse;
+      if (!resp.ok) {
+        throw new Error(payload.error || `校验云账号失败 ${resp.status}`);
+      }
+      const detail = payload.checks?.map((item) => `${item.name}: ${item.message}`).join("；") || "校验完成";
+      setAccountNotice(detail);
+      await loadCloudAssets();
+    } catch (error) {
+      setAccountNotice(error instanceof Error ? error.message : "校验云账号失败");
+    } finally {
+      setTestingAccountId("");
+    }
+  };
+
+  const deleteAccount = async (accountId: string) => {
+    if (USE_MOCK) return;
+    setAccountNotice("");
+    try {
+      const resp = await fetch(`${API_BASE}/api/cloud/accounts/${encodeURIComponent(accountId)}`, {
+        method: "DELETE",
+        headers: buildApiHeaders(),
+      });
+      const payload = (await resp.json().catch(() => ({}))) as { error?: string };
+      if (!resp.ok) {
+        throw new Error(payload.error || `删除云账号失败 ${resp.status}`);
+      }
+      if (editingAccountId === accountId) {
+        setEditingAccountId("");
+        setAccountForm(emptyAccountForm);
+      }
+      setAccountNotice("账号已删除");
+      await loadCloudAssets();
+    } catch (error) {
+      setAccountNotice(error instanceof Error ? error.message : "删除云账号失败");
+    }
+  };
+
+  const editAccount = (account: CloudAccount) => {
+    setEditingAccountId(account.id);
+    setAccountForm({
+      providerName: providerLabels[account.provider] ?? "阿里云 ECS",
+      name: account.name,
+      accessKeyId: "",
+      accessKeySecret: "",
+      regions: account.regions.join(","),
+      metricPeriod: account.metricPeriod || "60",
+      enabled: account.enabled !== false,
+    });
+    setAccountNotice("编辑模式下 AccessKey 留空表示沿用原值");
+  };
+
+  const cancelAccountEdit = () => {
+    setEditingAccountId("");
+    setAccountForm(emptyAccountForm);
+    setAccountNotice("");
+  };
+
+  const updateAccountForm = <K extends keyof CloudAccountForm>(key: K, value: CloudAccountForm[K]) => {
+    setAccountForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const isTreeExpanded = (key: string) => expandedTree[key] !== false;
+
+  const toggleTreeNode = (key: string) => {
+    setExpandedTree((current) => ({ ...current, [key]: current[key] === false }));
+  };
+
+  const toggleMetricSort = (key: MetricSortKey) => {
+    setMetricSort((current) => {
+      if (current?.key !== key) return { key, direction: "desc" };
+      return { key, direction: current.direction === "desc" ? "asc" : "desc" };
+    });
+  };
+
+  useEffect(() => {
+    void loadCloudAssets();
+    if (USE_MOCK || typeof window === "undefined") return;
+    const timer = window.setInterval(() => {
+      void loadCloudAssets({ silent: true });
+    }, ASSET_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const parsedScope = parseScope(scope);
 
-  const filteredServers = useMemo(() => {
+  const getAccount = (accountId: string) => accounts.find((account) => account.id === accountId);
+
+  const getServer = (serverId: string) => servers.find((server) => server.id === serverId);
+
+  const selectScope = (nextScope: string) => {
+    const nextParsedScope = parseScope(nextScope);
+    const firstServer = servers.find((server) => serverMatchesScope(server, nextParsedScope));
+    setScope(nextScope);
+    setSelectedServerId(firstServer?.id ?? "");
+  };
+
+  const visibleServers = useMemo(() => {
     const text = keyword.trim().toLowerCase();
-    return servers.filter((server) => {
-      if (parsedScope.kind === "provider" && server.provider !== parsedScope.value) return false;
-      if (parsedScope.kind === "account" && server.accountId !== parsedScope.value) return false;
-      if (parsedScope.kind === "accountRegion" && `${server.accountId}:${server.region}` !== parsedScope.value) return false;
-      if (parsedScope.kind === "region" && `${server.provider}:${server.region}` !== parsedScope.value) return false;
+    const rows = servers.filter((server) => {
+      if (!serverMatchesScope(server, parsedScope)) return false;
       if (statusFilter !== "all" && server.status !== statusFilter) return false;
       if (agentFilter !== "all" && server.agentStatus !== agentFilter) return false;
       if (!text) return true;
@@ -642,11 +1413,15 @@ export function CloudResourceConsole() {
         .toLowerCase()
         .includes(text);
     });
-  }, [agentFilter, keyword, parsedScope.kind, parsedScope.value, statusFilter]);
+    return sortServersByMetric(rows, metricSort);
+  }, [accounts, agentFilter, keyword, metricSort, parsedScope.kind, parsedScope.value, servers, statusFilter]);
+
+  const monitorServers = useMemo(() => sortServersByMetric(servers, metricSort), [metricSort, servers]);
 
   const selectedServer = useMemo(() => {
-    return servers.find((server) => server.id === selectedServerId) ?? filteredServers[0] ?? servers[0];
-  }, [filteredServers, selectedServerId]);
+    if (activePage === "monitor") return servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? emptyCloudServer;
+    return visibleServers.find((server) => server.id === selectedServerId) ?? visibleServers[0] ?? servers[0] ?? emptyCloudServer;
+  }, [activePage, selectedServerId, servers, visibleServers]);
 
   const selectedAccount = selectedServer ? getAccount(selectedServer.accountId) : undefined;
 
@@ -656,7 +1431,7 @@ export function CloudResourceConsole() {
     const alertCount = servers.reduce((total, server) => total + server.alerts, 0);
     const fileCount = servers.reduce((total, server) => total + server.files, 0);
     return { warningServers, agentIssues, alertCount, fileCount };
-  }, []);
+  }, [servers]);
 
   const regionRows = useMemo(() => {
     const map = new Map<string, { provider: Provider; region: string; total: number; abnormal: number; agents: number }>();
@@ -669,10 +1444,37 @@ export function CloudResourceConsole() {
       map.set(key, current);
     });
     return [...map.values()];
-  }, []);
+  }, [servers]);
+
+  const renderMetricSortButton = (key: MetricSortKey) => {
+    const active = metricSort?.key === key;
+    const directionText = active ? (metricSort.direction === "asc" ? "升序" : "降序") : "排序";
+    return (
+      <button
+        className={active ? "sort-button active" : "sort-button"}
+        type="button"
+        onClick={() => toggleMetricSort(key)}
+        title={`按${metricSortLabels[key]}${directionText}`}
+      >
+        <span>{metricSortLabels[key]}</span>
+        <b>{active ? (metricSort.direction === "asc" ? "↑" : "↓") : "↕"}</b>
+      </button>
+    );
+  };
 
   const renderServerTable = (rows: CloudServer[]) => (
     <table className="data-table server-list-table">
+      <colgroup>
+        <col className="server-col" />
+        <col className="account-col" />
+        <col className="region-col" />
+        <col className="ip-col" />
+        <col className="status-col" />
+        <col className="usage-col" />
+        <col className="usage-col" />
+        <col className="usage-col" />
+        <col className="monitor-col" />
+      </colgroup>
       <thead>
         <tr>
           <th>服务器</th>
@@ -680,11 +1482,10 @@ export function CloudResourceConsole() {
           <th>地域 / 可用区</th>
           <th>IP</th>
           <th>状态</th>
-          <th>CPU</th>
-          <th>内存</th>
-          <th>磁盘</th>
-          <th>探针</th>
-          <th>GWF 闭环</th>
+          <th>{renderMetricSortButton("cpu")}</th>
+          <th>{renderMetricSortButton("memory")}</th>
+          <th>{renderMetricSortButton("disk")}</th>
+          <th>云监控</th>
         </tr>
       </thead>
       <tbody>
@@ -696,21 +1497,22 @@ export function CloudResourceConsole() {
               key={server.id}
               onClick={() => setSelectedServerId(server.id)}
             >
-              <td>
+              <td className="server-name-cell">
                 <strong>{server.name}</strong>
                 <span>{server.instanceId}</span>
                 <span>{server.business}</span>
               </td>
-              <td>
+              <td className="account-cell">
                 <strong>{providerLabels[server.provider]}</strong>
                 <span>{account?.alias ?? "--"}</span>
               </td>
-              <td>
+              <td className="region-cell">
                 <strong>{server.region}</strong>
                 <span>{server.zone}</span>
               </td>
-              <td>
-                <span>公网：{server.publicIp}</span>
+              <td className="ip-cell">
+                <span>{publicIpLabel(server)}：{server.publicIp}</span>
+                {server.publicIpType === "eip" && server.publicIpId ? <span>EIP ID：{server.publicIpId}</span> : null}
                 <span>内网：{server.privateIp}</span>
               </td>
               <td>
@@ -719,20 +1521,16 @@ export function CloudResourceConsole() {
               <td><Utilization value={server.cpu} /></td>
               <td><Utilization value={server.memory} /></td>
               <td><Utilization value={server.disk} /></td>
-              <td>
+              <td className="monitor-cell" title={`${agentStatusLabels[server.agentStatus]} / ${server.lastSeen}`}>
                 <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
                 <span>{server.lastSeen}</span>
-              </td>
-              <td>
-                <span>告警 {server.alerts} / 文件 {server.files}</span>
-                <span>AI {server.ai} / KB {server.kb}</span>
               </td>
             </tr>
           );
         })}
         {!rows.length ? (
           <tr>
-            <td className="empty-cell" colSpan={10}>当前筛选条件下没有服务器</td>
+            <td className="empty-cell" colSpan={9}>当前筛选条件下没有服务器</td>
           </tr>
         ) : null}
       </tbody>
@@ -745,48 +1543,91 @@ export function CloudResourceConsole() {
         <strong>资源范围</strong>
         <span>按云平台 / 账号 / 地域筛选</span>
       </div>
-      <button className={scope === buildScopeKey("all") ? "tree-node root active" : "tree-node root"} onClick={() => setScope(buildScopeKey("all"))}>
+      <button className={scope === buildScopeKey("all") ? "tree-node root active" : "tree-node root"} onClick={() => selectScope(buildScopeKey("all"))}>
         <span className="tree-label">全部云平台</span>
         <em>{servers.length}</em>
       </button>
       {(["aliyun", "huawei", "tencent"] as Provider[]).map((provider) => {
+        const providerKey = `provider:${provider}`;
+        const providerExpanded = isTreeExpanded(providerKey);
         const providerServers = servers.filter((server) => server.provider === provider);
         const providerAccounts = accounts.filter((account) => account.provider === provider);
         if (!providerServers.length && !providerAccounts.length) return null;
         return (
           <div className="tree-group" key={provider}>
-            <button
-              className={scope === buildScopeKey("provider", provider) ? "tree-node provider active" : "tree-node provider"}
-              onClick={() => setScope(buildScopeKey("provider", provider))}
-            >
-              <span className="tree-label">{providerLabels[provider]}</span>
-              <em>{providerServers.length}</em>
-            </button>
-            {providerAccounts.map((account) => {
-              const accountServers = servers.filter((server) => server.accountId === account.id);
-              const accountRegions = [...new Set(accountServers.map((server) => server.region))];
-              return (
-                <div className="account-branch" key={account.id}>
-                  <button
-                    className={scope === buildScopeKey("account", account.id) ? "tree-node account active" : "tree-node account"}
-                    onClick={() => setScope(buildScopeKey("account", account.id))}
-                  >
-                    <span className="tree-label">{account.alias}</span>
-                    <em>{accountServers.length}</em>
-                  </button>
-                  {accountRegions.map((region) => (
-                    <button
-                      className={scope === buildScopeKey("accountRegion", `${account.id}:${region}`) ? "tree-node region active" : "tree-node region"}
-                      key={`${account.id}:${region}`}
-                      onClick={() => setScope(buildScopeKey("accountRegion", `${account.id}:${region}`))}
-                    >
-                      <span className="tree-label">{region}</span>
-                      <em>{accountServers.filter((server) => server.region === region).length}</em>
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
+            <div className="tree-line">
+              <button className={providerExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(providerKey)} aria-label={providerExpanded ? "收起云平台" : "展开云平台"}>
+                <span className="tree-caret" />
+              </button>
+              <button
+                className={scope === buildScopeKey("provider", provider) ? "tree-node provider active" : "tree-node provider"}
+                onClick={() => selectScope(buildScopeKey("provider", provider))}
+              >
+                <span className="tree-label">{providerLabels[provider]}</span>
+                <em>{providerServers.length}</em>
+              </button>
+            </div>
+            {providerExpanded
+              ? providerAccounts.map((account) => {
+                  const accountKey = `account:${account.id}`;
+                  const accountExpanded = isTreeExpanded(accountKey);
+                  const accountServers = servers.filter((server) => server.accountId === account.id);
+                  const accountRegions = [...new Set(accountServers.map((server) => server.region))];
+                  return (
+                    <div className="account-branch" key={account.id}>
+                      <div className="tree-line">
+                        <button className={accountExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(accountKey)} aria-label={accountExpanded ? "收起账号" : "展开账号"}>
+                          <span className="tree-caret" />
+                        </button>
+                        <button
+                          className={scope === buildScopeKey("account", account.id) ? "tree-node account active" : "tree-node account"}
+                          onClick={() => selectScope(buildScopeKey("account", account.id))}
+                        >
+                          <span className="tree-label">{account.name}</span>
+                          <em>{accountServers.length}</em>
+                        </button>
+                      </div>
+                      {accountExpanded
+                        ? accountRegions.map((region) => {
+                            const regionKey = `accountRegion:${account.id}:${region}`;
+                            const regionExpanded = isTreeExpanded(regionKey);
+                            const regionServers = accountServers.filter((server) => server.region === region);
+                            return (
+                              <div className="region-branch" key={`${account.id}:${region}`}>
+                                <div className="tree-line">
+                                  <button className={regionExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(regionKey)} aria-label={regionExpanded ? "收起地域" : "展开地域"}>
+                                    <span className="tree-caret" />
+                                  </button>
+                                  <button
+                                    className={scope === buildScopeKey("accountRegion", `${account.id}:${region}`) ? "tree-node region active" : "tree-node region"}
+                                    onClick={() => selectScope(buildScopeKey("accountRegion", `${account.id}:${region}`))}
+                                  >
+                                    <span className="tree-label">{region}</span>
+                                    <em>{regionServers.length}</em>
+                                  </button>
+                                </div>
+                                {regionExpanded
+                                  ? regionServers.map((server) => (
+                                      <button
+                                        className={selectedServer.id === server.id ? "tree-node server active" : "tree-node server"}
+                                        key={server.id}
+                                        onClick={() => {
+                                          selectScope(buildScopeKey("accountRegion", `${account.id}:${region}`));
+                                          setSelectedServerId(server.id);
+                                        }}
+                                      >
+                                        <span className="tree-label">{server.name}</span>
+                                      </button>
+                                    ))
+                                  : null}
+                              </div>
+                            );
+                          })
+                        : null}
+                    </div>
+                  );
+                })
+              : null}
           </div>
         );
       })}
@@ -807,12 +1648,13 @@ export function CloudResourceConsole() {
             <option value="maintenance">维护中</option>
           </select>
           <select value={agentFilter} onChange={(event) => setAgentFilter(event.currentTarget.value as AgentStatus | "all")}>
-            <option value="all">全部探针</option>
-            <option value="online">在线</option>
-            <option value="stale">心跳过期</option>
-            <option value="missing">未接入</option>
+            <option value="all">全部监控</option>
+            <option value="online">正常</option>
+            <option value="stale">数据异常</option>
+            <option value="missing">未同步</option>
+            <option value="offline">离线</option>
           </select>
-          <button type="button">同步资产</button>
+          <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>{assetLoading ? "同步中" : "同步资产"}</button>
           <button type="button">导出</button>
         </div>
 
@@ -820,12 +1662,13 @@ export function CloudResourceConsole() {
           <span>云账号：{accounts.length}</span>
           <span>服务器：{servers.length}</span>
           <span>异常服务器：{summary.warningServers}</span>
-          <span>探针异常：{summary.agentIssues}</span>
+          <span>云监控异常：{summary.agentIssues}</span>
           <span>今日文件入云：{summary.fileCount}</span>
           <span>待关注告警：{summary.alertCount}</span>
+          <span>云资源同步：{assetLoading ? "同步中" : assetError ? `异常：${assetError}` : `${lastSyncAt}，自动刷新 30 秒`}</span>
         </div>
 
-        <div className="table-panel">{renderServerTable(filteredServers)}</div>
+        <div className="table-panel">{renderServerTable(visibleServers)}</div>
 
         <section className="detail-panel">
           <div className="section-title">
@@ -837,11 +1680,10 @@ export function CloudResourceConsole() {
               <tr><th>服务器</th><td>{selectedServer.name}</td><th>实例 ID</th><td>{selectedServer.instanceId}</td></tr>
               <tr><th>云平台</th><td>{providerLabels[selectedServer.provider]}</td><th>账号</th><td>{selectedAccount?.name ?? "--"}</td></tr>
               <tr><th>地域</th><td>{selectedServer.region}</td><th>可用区</th><td>{selectedServer.zone}</td></tr>
-              <tr><th>公网 IP</th><td>{selectedServer.publicIp}</td><th>内网 IP</th><td>{selectedServer.privateIp}</td></tr>
+              <tr><th>{publicIpLabel(selectedServer)}</th><td>{selectedServer.publicIp}{selectedServer.publicIpId ? ` / ${selectedServer.publicIpId}` : ""}</td><th>内网 IP</th><td>{selectedServer.privateIp}</td></tr>
               <tr><th>系统</th><td>{selectedServer.os}</td><th>规格</th><td>{selectedServer.spec}</td></tr>
-              <tr><th>运行状态</th><td>{serverStatusLabels[selectedServer.status]}</td><th>探针状态</th><td>{agentStatusLabels[selectedServer.agentStatus]} / {selectedServer.lastSeen}</td></tr>
+              <tr><th>运行状态</th><td>{serverStatusLabels[selectedServer.status]}</td><th>云监控</th><td>{agentStatusLabels[selectedServer.agentStatus]} / {selectedServer.lastSeen}</td></tr>
               <tr><th>负载</th><td>{selectedServer.load}</td><th>运行时长</th><td>{selectedServer.uptime}</td></tr>
-              <tr><th>GWF 闭环</th><td colSpan={3}>文件 {selectedServer.files}，告警 {selectedServer.alerts}，AI {selectedServer.ai}，知识库命中 {selectedServer.kb}</td></tr>
             </tbody>
           </table>
         </section>
@@ -851,10 +1693,54 @@ export function CloudResourceConsole() {
 
   const renderAccountsPage = () => (
     <section className="page-main-section">
+      <div className="account-config-panel">
+        <div className="section-title">
+          <h3>{editingAccountId ? "编辑云平台账号" : "新增云平台账号"}</h3>
+          <span>AccessKey Secret 只提交到后端加密保存，不会回显到前端</span>
+        </div>
+        <div className="account-form">
+          <label>
+            <span>云平台</span>
+            <input value={accountForm.providerName} onChange={(event) => updateAccountForm("providerName", event.currentTarget.value)} placeholder="阿里云 ECS" />
+          </label>
+          <label>
+            <span>账号名称</span>
+            <input value={accountForm.name} onChange={(event) => updateAccountForm("name", event.currentTarget.value)} placeholder="浙江万盛账号" />
+          </label>
+          <label>
+            <span>AccessKey ID</span>
+            <input value={accountForm.accessKeyId} onChange={(event) => updateAccountForm("accessKeyId", event.currentTarget.value)} placeholder={editingAccountId ? "留空沿用原值" : "LTAI..."} />
+          </label>
+          <label>
+            <span>AccessKey Secret</span>
+            <input type="password" value={accountForm.accessKeySecret} onChange={(event) => updateAccountForm("accessKeySecret", event.currentTarget.value)} placeholder={editingAccountId ? "留空沿用原值" : "AccessKey Secret"} />
+          </label>
+          <label>
+            <span>地域</span>
+            <input value={accountForm.regions} onChange={(event) => updateAccountForm("regions", event.currentTarget.value)} placeholder="cn-hangzhou,cn-shanghai" />
+          </label>
+          <label>
+            <span>采样周期（秒）</span>
+            <input value={accountForm.metricPeriod} onChange={(event) => updateAccountForm("metricPeriod", event.currentTarget.value)} placeholder="60" />
+          </label>
+          <label>
+            <span>账号状态</span>
+            <select value={accountForm.enabled ? "enabled" : "disabled"} onChange={(event) => updateAccountForm("enabled", event.currentTarget.value === "enabled")}>
+              <option value="enabled">启用同步和展示</option>
+              <option value="disabled">停用</option>
+            </select>
+          </label>
+          <div className="account-form-actions">
+            <button type="button" onClick={() => void saveAccount()} disabled={accountSaving}>
+              {accountSaving ? "保存中" : editingAccountId ? "更新账号" : "保存账号"}
+            </button>
+            {editingAccountId ? <button type="button" onClick={cancelAccountEdit}>取消编辑</button> : null}
+          </div>
+        </div>
+        {accountNotice ? <div className="inline-message">{accountNotice}</div> : null}
+      </div>
       <div className="toolbar">
-        <button type="button">新增云账号</button>
-        <button type="button">校验凭据</button>
-        <button type="button">同步全部账号</button>
+        <button type="button" onClick={() => void loadCloudAssets()}>同步全部账号</button>
       </div>
       <div className="table-panel">
         <table className="data-table">
@@ -869,13 +1755,14 @@ export function CloudResourceConsole() {
               <th>服务器</th>
               <th>状态</th>
               <th>最近同步</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {accounts.map((account) => (
               <tr key={account.id}>
                 <td>{providerLabels[account.provider]}</td>
-                <td><strong>{account.name}</strong><span>{account.alias}</span></td>
+                <td><strong>{account.name}</strong><span>{account.checkMessage || account.alias}</span></td>
                 <td>{account.uid}</td>
                 <td>{account.owner}</td>
                 <td>{account.env}</td>
@@ -883,8 +1770,22 @@ export function CloudResourceConsole() {
                 <td>{servers.filter((server) => server.accountId === account.id).length}</td>
                 <td><StatusText status={account.status}>{accountStatusLabels[account.status]}</StatusText></td>
                 <td>{account.lastSync}</td>
+                <td>
+                  <div className="row-actions">
+                    <button className="link-button" type="button" onClick={() => void testAccount(account.id)} disabled={testingAccountId === account.id}>
+                      {testingAccountId === account.id ? "校验中" : "校验"}
+                    </button>
+                    <button className="link-button" type="button" onClick={() => editAccount(account)}>编辑</button>
+                    <button className="link-button danger" type="button" onClick={() => void deleteAccount(account.id)}>删除</button>
+                  </div>
+                </td>
               </tr>
             ))}
+            {!accounts.length ? (
+              <tr>
+                <td className="empty-cell" colSpan={10}>还没有云账号，先在上方新增一个阿里云 ECS 账号</td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -914,7 +1815,7 @@ export function CloudResourceConsole() {
                 <td>{row.abnormal}</td>
                 <td>{row.agents}</td>
                 <td><button className="link-button" type="button" onClick={() => {
-                  setScope(buildScopeKey("region", `${row.provider}:${row.region}`));
+                  selectScope(buildScopeKey("region", `${row.provider}:${row.region}`));
                   setActivePage("servers");
                 }}>查看服务器</button></td>
               </tr>
@@ -925,17 +1826,56 @@ export function CloudResourceConsole() {
     </section>
   );
 
-  const renderMonitorPage = () => (
-    <section className="page-main-section">
-      <div className="table-panel">{renderServerTable(servers)}</div>
-    </section>
-  );
+  const renderMonitorPage = () => {
+    const overview = overviewByServerId[selectedServer.id];
+    const metricRows = buildMonitorRows(overview);
+    return (
+      <section className="page-main-section">
+        <div className="table-panel">{renderServerTable(monitorServers)}</div>
+        <section className="detail-panel">
+          <div className="section-title">
+            <h3>ECS 监控详情</h3>
+            <span>{selectedServer.name} / {selectedServer.instanceId}</span>
+          </div>
+          {overview?.message || overview?.error ? (
+            <div className="inline-message">{overview.message || overview.error}</div>
+          ) : null}
+          <table className="data-table">
+            <thead>
+              <tr>
+	                <th>指标</th>
+	                <th>当前值</th>
+	                <th>指标名</th>
+	                <th>采样点数</th>
+	                <th>状态</th>
+	                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {metricRows.map((item) => (
+                <tr key={item.key}>
+                  <td>{item.label}</td>
+                  <td>{item.value}</td>
+	                  <td>{item.metricName}</td>
+	                  <td>{item.points}</td>
+	                  <td><StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>{item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}</StatusText></td>
+	                  <td>{item.note}</td>
+	                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </section>
+    );
+  };
 
   const renderAgentsPage = () => (
     <section className="page-main-section">
       <div className="toolbar">
         <button type="button">生成安装命令</button>
-        <button type="button">批量检查心跳</button>
+        <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>
+          {assetLoading ? "检查中" : "批量检查心跳"}
+        </button>
       </div>
       <div className="table-panel">
         <table className="data-table">
@@ -959,7 +1899,13 @@ export function CloudResourceConsole() {
                   <td><StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText></td>
                   <td>{server.lastSeen}</td>
                   <td>{server.files}</td>
-                  <td>{server.agentStatus === "online" ? "保持现有采集策略" : "检查 Agent 服务或补装探针"}</td>
+                  <td>
+                    {server.agentStatus === "online"
+                      ? "保持现有采集策略"
+                      : server.agentStatus === "offline"
+                        ? "实例离线，恢复运行后再检查探针"
+                        : "检查 Agent 服务或补装探针"}
+                  </td>
                 </tr>
               );
             })}
@@ -1027,7 +1973,13 @@ export function CloudResourceConsole() {
                   <td>{server.name}</td>
                   <td>{providerLabels[server.provider]} / {account?.alias ?? "--"}</td>
                   <td>{server.files}</td>
-                  <td>{server.agentStatus === "online" ? "采集正常" : "等待探针恢复"}</td>
+                  <td>
+                    {server.agentStatus === "online"
+                      ? "采集正常"
+                      : server.agentStatus === "offline"
+                        ? "实例离线，暂停采集判断"
+                        : "等待探针恢复"}
+                  </td>
                   <td>{server.files === 0 ? "确认日志目录和自动上传配置" : "保持当前队列策略"}</td>
                 </tr>
               );
@@ -1188,14 +2140,14 @@ export function CloudResourceConsole() {
             <p>聚合阿里云、华为云等多个云平台账号下的服务器，并关联监控、探针、告警、文件入云、AI 分析和知识库复用。</p>
           </div>
           <div className="header-meta">
-            <span>当前为前端样例数据</span>
+            <span>{USE_MOCK ? "当前为前端样例数据" : "当前为真实云账号数据"}</span>
             <button type="button" onClick={() => setSidebarHidden((current) => !current)}>
               {sidebarHidden ? "展开菜单" : "隐藏菜单"}
             </button>
             <button type="button" onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}>
               {theme === "light" ? "深色模式" : "浅色模式"}
             </button>
-            <button type="button">刷新</button>
+            <button type="button" onClick={() => void loadCloudAssets()}>刷新</button>
           </div>
         </header>
         <div className="admin-content">{renderPage()}</div>

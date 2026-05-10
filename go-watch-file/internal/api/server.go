@@ -38,6 +38,7 @@ type Server struct {
 	httpServer *http.Server //负责监听端口、接收请求、管理超时/连接等
 	kbService  *kb.Service
 	controlDB  *controlSQLiteStore
+	cloudDB    *cloudAccountStore
 }
 
 // 请求处理器
@@ -56,6 +57,7 @@ type handler struct {
 	controlNextAgentSeq uint64
 	controlNextTaskSeq  uint64
 	controlStore        *controlSQLiteStore
+	cloudStore          *cloudAccountStore
 	domainProber        registryDomainProbeRunner
 
 	dashboardCacheMu     sync.Mutex
@@ -85,6 +87,10 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	if err != nil {
 		logger.Warn("控制面存储初始化失败，已降级内存模式: %v", err)
 	}
+	cloudStore, err := newCloudAccountStore("")
+	if err != nil {
+		logger.Warn("云账号存储初始化失败，云账号配置接口不可用: %v", err)
+	}
 	h := &handler{
 		cfg:                cfg,
 		fs:                 fs,
@@ -94,6 +100,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		controlAgentKeyIdx: make(map[string]string),
 		controlTasks:       make(map[string]controlTaskState),
 		controlStore:       controlStore,
+		cloudStore:         cloudStore,
 		domainProber:       newRegistryDomainProber(registryDomainProbeOptions{}),
 		dashboardCacheTTL:  defaultDashboardTTL,
 	}
@@ -105,6 +112,9 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		} else {
 			logger.Info("控制面存储已加载: %s", h.controlStore.DBPath())
 		}
+	}
+	if h.cloudStore != nil {
+		logger.Info("云账号存储已加载: %s", h.cloudStore.DBPath())
 	}
 	mux := http.NewServeMux() //创建一个路由器（根据 URL 路径分发请求）
 	mux.HandleFunc("/api/dashboard", h.dashboard)
@@ -133,6 +143,11 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/control/dispatch/pull", h.controlDispatchPullHandler)
 	mux.HandleFunc("/api/control/audit", h.controlAuditHandler)
 	mux.HandleFunc("/api/registry/domain-probe", h.registryDomainProbe)
+	mux.HandleFunc("/api/cloud/accounts", h.cloudAccountsHandler)
+	mux.HandleFunc("/api/cloud/accounts/", h.cloudAccountByIDHandler)
+	mux.HandleFunc("/api/cloud/aliyun/instances", h.cloudAliyunInstances)
+	mux.HandleFunc("/api/cloud/aliyun/metrics", h.cloudAliyunMetrics)
+	mux.HandleFunc("/api/cloud/aliyun/overview", h.cloudAliyunOverview)
 	mux.HandleFunc("/api/health", h.health)
 	mux.HandleFunc("/metrics", h.prometheusMetrics)
 
@@ -142,7 +157,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: resolveWriteTimeout(cfg),
 	}
-	return &Server{httpServer: srv, kbService: kbService, controlDB: h.controlStore}
+	return &Server{httpServer: srv, kbService: kbService, controlDB: h.controlStore, cloudDB: h.cloudStore}
 }
 
 // prometheusMetrics 导出 Prometheus 采集格式的运行指标
@@ -219,6 +234,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.controlDB != nil {
 		if closeErr := s.controlDB.Close(); closeErr != nil {
 			logger.Warn("关闭控制面存储失败: %v", closeErr)
+		}
+	}
+	if s.cloudDB != nil {
+		if closeErr := s.cloudDB.Close(); closeErr != nil {
+			logger.Warn("关闭云账号存储失败: %v", closeErr)
 		}
 	}
 	return err
