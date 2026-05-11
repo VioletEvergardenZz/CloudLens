@@ -434,6 +434,9 @@ func TestLoadConfigWithoutConfigFileUsesDefaults(t *testing.T) {
 	if config.AliyunMetricPeriod != "60" {
 		t.Fatalf("AliyunMetricPeriod 默认值期望 60，实际 %s", config.AliyunMetricPeriod)
 	}
+	if config.HuaweiRegion != "cn-south-1" {
+		t.Fatalf("HuaweiRegion 默认值期望 cn-south-1，实际 %s", config.HuaweiRegion)
+	}
 	if got, want := os.Getenv("CLOUDLENS_RUNTIME_ROOT"), runtimeRoot; got != want {
 		t.Fatalf("CLOUDLENS_RUNTIME_ROOT 期望 %s，实际 %s", want, got)
 	}

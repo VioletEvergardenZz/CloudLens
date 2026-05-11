@@ -577,6 +577,10 @@ select {
   font-size: 12px;
 }
 
+.account-form-wide {
+  grid-column: 1 / -1;
+}
+
 .account-form label span {
   font-weight: 700;
 }
@@ -602,6 +606,35 @@ select {
 .account-form select:disabled {
   color: #64748b;
   background: #f8fafc;
+}
+
+.form-help {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.region-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.region-shortcuts button {
+  height: 28px;
+  border: 1px solid #cfd6e0;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #374151;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.region-shortcuts button:hover {
+  border-color: #155eef;
+  color: #155eef;
+  background: #eef4ff;
 }
 
 .account-form button {

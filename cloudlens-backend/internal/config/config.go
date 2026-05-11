@@ -41,7 +41,7 @@ const (
 	defaultAITimeout                        = "20s"
 	defaultAliyunRegion                     = "cn-hangzhou"
 	defaultAliyunMetricPeriod               = "60"
-	defaultHuaweiRegion                     = "cn-north-4"
+	defaultHuaweiRegion                     = "cn-south-1"
 	defaultHuaweiMetricPeriod               = "60"
 	defaultUploadRetryMaxAttempts           = 4
 	defaultUploadResumablePartSize          = 10 * 1024 * 1024

@@ -295,6 +295,11 @@ type CloudAccountForm = {
   metricPeriod: string;
 };
 
+type AccountRegionPreset = {
+  label: string;
+  value: string;
+};
+
 type MonitorMetricKey = string;
 
 type MonitorMetric = {
@@ -322,8 +327,33 @@ const providerLabels: Record<Provider, string> = {
 const supportedAccountProviders: Provider[] = ["aliyun", "huawei"];
 const defaultAccountRegions: Record<Provider, string> = {
   aliyun: "cn-hangzhou",
-  huawei: "cn-north-4",
+  huawei: "cn-south-1",
   tencent: "ap-guangzhou",
+};
+
+const accountRegionPresets: Record<Provider, AccountRegionPreset[]> = {
+  aliyun: [
+    { label: "华南3（广州）", value: "cn-guangzhou" },
+    { label: "华南1（深圳）", value: "cn-shenzhen" },
+    { label: "华东1（杭州）", value: "cn-hangzhou" },
+    { label: "华东2（上海）", value: "cn-shanghai" },
+    { label: "华北2（北京）", value: "cn-beijing" },
+  ],
+  huawei: [
+    { label: "华南-广州", value: "cn-south-1" },
+    { label: "华北-北京四", value: "cn-north-4" },
+    { label: "华东-上海一", value: "cn-east-3" },
+    { label: "中国-香港", value: "ap-southeast-1" },
+  ],
+  tencent: [
+    { label: "广州", value: "ap-guangzhou" },
+  ],
+};
+
+const regionInputTips: Record<Provider, string> = {
+  aliyun: "例如：华南3（广州）填 cn-guangzhou；多地域用英文逗号分隔。",
+  huawei: "例如：华南-广州填 cn-south-1；多地域用英文逗号分隔。",
+  tencent: "例如：广州填 ap-guangzhou；多地域用英文逗号分隔。",
 };
 
 const resourceTypeLabels: Record<ResourceType, string> = {
@@ -2079,6 +2109,10 @@ export function CloudResourceConsole() {
     setAccountNotice("");
   };
 
+  const applyRegionPreset = (region: string) => {
+    updateAccountForm("regions", region);
+  };
+
   const updateAccountForm = <K extends keyof CloudAccountForm>(key: K, value: CloudAccountForm[K]) => {
     setAccountForm((current) => {
       if (key === "provider") {
@@ -2593,12 +2627,21 @@ export function CloudResourceConsole() {
           {accountForm.provider === "huawei" ? (
             <label>
               <span>Project ID</span>
-              <input value={accountForm.projectId} onChange={(event) => updateAccountForm("projectId", event.currentTarget.value)} placeholder="可选，多个项目时填写" />
+              <input value={accountForm.projectId} onChange={(event) => updateAccountForm("projectId", event.currentTarget.value)} placeholder="可先留空，多个项目时填写" />
+              <small className="form-help">通常可留空自动识别；如果提示多个项目，到华为云“我的凭证 / API凭证”复制对应区域的项目ID。</small>
             </label>
           ) : null}
-          <label>
+          <label className="account-form-wide">
             <span>地域</span>
-            <input value={accountForm.regions} onChange={(event) => updateAccountForm("regions", event.currentTarget.value)} placeholder="cn-hangzhou,cn-shanghai" />
+            <input value={accountForm.regions} onChange={(event) => updateAccountForm("regions", event.currentTarget.value)} placeholder={accountForm.provider === "huawei" ? "cn-south-1" : "cn-guangzhou,cn-shanghai"} />
+            <div className="region-shortcuts">
+              {accountRegionPresets[accountForm.provider].map((region) => (
+                <button key={region.value} type="button" onClick={() => applyRegionPreset(region.value)}>
+                  {region.label} / {region.value}
+                </button>
+              ))}
+            </div>
+            <small className="form-help">{regionInputTips[accountForm.provider]}</small>
           </label>
           <label>
             <span>采样周期（秒）</span>
