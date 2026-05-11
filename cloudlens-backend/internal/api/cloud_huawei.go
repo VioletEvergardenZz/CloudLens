@@ -19,7 +19,10 @@ type huaweiMetricCandidate struct {
 	Name      string
 	Dimension map[string]string
 	Scale     float64
+	Unit      string
 }
+
+var huaweiCommonMountPoints = []string{"/", "/data", "/home", "/var", "C:", "D:"}
 
 var defaultHuaweiOverviewMetrics = map[string][]huaweiMetricCandidate{
 	"cpu": {
@@ -32,24 +35,24 @@ var defaultHuaweiOverviewMetrics = map[string][]huaweiMetricCandidate{
 	},
 	"disk": {
 		{Namespace: huaweicloud.NamespaceECS, Name: "disk_util_inband"},
-		{Namespace: huaweicloud.NamespaceAGT, Name: "disk_usedPercent"},
-		{Namespace: huaweicloud.NamespaceAGT, Name: "disk_util"},
+		{Namespace: huaweicloud.NamespaceAGT, Name: "disk_usedPercent", Dimension: map[string]string{"mount_point": "/"}},
+		{Namespace: huaweicloud.NamespaceAGT, Name: "disk_util", Dimension: map[string]string{"mount_point": "/"}},
 	},
 	"load1m": {
 		{Namespace: huaweicloud.NamespaceAGT, Name: "load_average1"},
 		{Namespace: huaweicloud.NamespaceAGT, Name: "load_average_1m"},
 	},
 	"internetIn": {
-		{Namespace: huaweicloud.NamespaceECS, Name: "network_incoming_bytes_aggregate_rate", Scale: 8},
+		{Namespace: huaweicloud.NamespaceECS, Name: "network_incoming_bytes_aggregate_rate", Scale: 8, Unit: "bit/s"},
 	},
 	"internetOut": {
-		{Namespace: huaweicloud.NamespaceECS, Name: "network_outgoing_bytes_aggregate_rate", Scale: 8},
+		{Namespace: huaweicloud.NamespaceECS, Name: "network_outgoing_bytes_aggregate_rate", Scale: 8, Unit: "bit/s"},
 	},
 	"intranetIn": {
-		{Namespace: huaweicloud.NamespaceECS, Name: "network_incoming_bytes_rate_inband", Scale: 8},
+		{Namespace: huaweicloud.NamespaceECS, Name: "network_incoming_bytes_rate_inband", Scale: 8, Unit: "bit/s"},
 	},
 	"intranetOut": {
-		{Namespace: huaweicloud.NamespaceECS, Name: "network_outgoing_bytes_rate_inband", Scale: 8},
+		{Namespace: huaweicloud.NamespaceECS, Name: "network_outgoing_bytes_rate_inband", Scale: 8, Unit: "bit/s"},
 	},
 	"diskReadBps": {
 		{Namespace: huaweicloud.NamespaceECS, Name: "disk_read_bytes_rate"},
@@ -253,8 +256,21 @@ func queryFirstHuaweiMetric(client *huaweicloud.Client, candidates []huaweiMetri
 			continue
 		}
 		series = scaleHuaweiMetricSeries(series, candidate.Scale)
+		series = annotateHuaweiMetricSeries(series, candidate.Unit)
 		if series != nil && len(series.Points) > 0 {
 			return series, nil
+		}
+		if isHuaweiDiskMountMetric(namespace, candidate.Name) && dimensions["mount_point"] == "/" {
+			mountSeries, mountErr := queryFirstHuaweiMountMetric(client, namespace, candidate.Name, instanceID, region, minutes, period, candidate.Scale)
+			if mountErr != nil && firstErr == nil {
+				firstErr = mountErr
+			}
+			if mountSeries != nil && len(mountSeries.Points) > 0 {
+				return mountSeries, nil
+			}
+			if firstEmpty == nil && mountSeries != nil {
+				firstEmpty = mountSeries
+			}
 		}
 		if firstEmpty == nil {
 			firstEmpty = series
@@ -269,12 +285,109 @@ func queryFirstHuaweiMetric(client *huaweicloud.Client, candidates []huaweiMetri
 	return nil, fmt.Errorf("没有可用的指标候选")
 }
 
+func queryFirstHuaweiMountMetric(client *huaweicloud.Client, namespace, metricName, instanceID, region string, minutes int, period string, scale float64) (*huaweicloud.MetricSeries, error) {
+	mountPoints, err := huaweiMetricMountPoints(client, namespace, metricName, instanceID, region)
+	if err != nil {
+		mountPoints = huaweiCommonMountPoints
+	}
+	var firstErr error
+	var firstEmpty *huaweicloud.MetricSeries
+	for _, mountPoint := range mountPoints {
+		dimensions := map[string]string{
+			"instance_id": instanceID,
+			"mount_point": strings.TrimSpace(mountPoint),
+		}
+		series, metricErr := client.MetricWithDimensions(namespace, metricName, dimensions, region, minutes, period)
+		if metricErr != nil {
+			if firstErr == nil {
+				firstErr = metricErr
+			}
+			continue
+		}
+		series = scaleHuaweiMetricSeries(series, scale)
+		series = annotateHuaweiMetricSeries(series, "")
+		if series != nil {
+			series.SubKey = strings.TrimSpace(mountPoint)
+			if len(series.Points) > 0 {
+				return series, nil
+			}
+			if firstEmpty == nil {
+				firstEmpty = series
+			}
+		}
+	}
+	if firstEmpty != nil {
+		return firstEmpty, nil
+	}
+	return nil, firstErr
+}
+
+func huaweiMetricMountPoints(client *huaweicloud.Client, namespace, metricName, instanceID, region string) ([]string, error) {
+	dimensions, err := client.MetricDimensions(namespace, metricName, map[string]string{"instance_id": instanceID}, region)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(dimensions))
+	seen := make(map[string]struct{}, len(dimensions))
+	for _, item := range dimensions {
+		mountPoint := strings.TrimSpace(firstCloudString(item["mount_point"], item["disk_name"], item["device"]))
+		if mountPoint == "" {
+			continue
+		}
+		if _, ok := seen[mountPoint]; ok {
+			continue
+		}
+		seen[mountPoint] = struct{}{}
+		out = append(out, mountPoint)
+	}
+	if len(out) == 0 {
+		return huaweiCommonMountPoints, nil
+	}
+	return out, nil
+}
+
+func isHuaweiDiskMountMetric(namespace, metricName string) bool {
+	if strings.TrimSpace(namespace) != huaweicloud.NamespaceAGT {
+		return false
+	}
+	switch strings.TrimSpace(metricName) {
+	case "disk_usedPercent", "disk_util":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstCloudString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func scaleHuaweiMetricSeries(series *huaweicloud.MetricSeries, scale float64) *huaweicloud.MetricSeries {
 	if series == nil || scale == 0 || scale == 1 {
 		return series
 	}
+	if series.Unit == "Byte/s" || series.Unit == "byte/s" {
+		series.Unit = "bit/s"
+	}
 	for index := range series.Points {
 		series.Points[index].Value *= scale
+	}
+	return series
+}
+
+func annotateHuaweiMetricSeries(series *huaweicloud.MetricSeries, fallbackUnit string) *huaweicloud.MetricSeries {
+	if series == nil {
+		return nil
+	}
+	fallbackUnit = strings.TrimSpace(fallbackUnit)
+	if fallbackUnit != "" {
+		series.Unit = fallbackUnit
+		return series
 	}
 	return series
 }

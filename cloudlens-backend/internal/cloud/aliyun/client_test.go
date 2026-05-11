@@ -79,6 +79,29 @@ func TestIsSpotInstanceFromStrategy(t *testing.T) {
 	}
 }
 
+func TestAliyunMetricUnitDocumentsOverviewUnits(t *testing.T) {
+	cases := map[string]string{
+		"CPUUtilization":                 "%",
+		"memory_usedutilization":         "%",
+		"InternetInRate":                 "bit/s",
+		"VPC_PublicIP_InternetOutRate":   "bit/s",
+		"DiskReadBPS":                    "Byte/s",
+		"ecs.UnknownMetricForRegression": "",
+	}
+	for metricName, expected := range cases {
+		if actual := aliyunMetricUnit(metricName); actual != expected {
+			t.Fatalf("指标 %s 单位期望 %q，实际 %q", metricName, expected, actual)
+		}
+	}
+}
+
+func TestTrafficKbitToBitRateUsesSamplingPeriod(t *testing.T) {
+	got := trafficKbitToBitRate(120, 60)
+	if got != 2000 {
+		t.Fatalf("期望 120 Kbit / 60s 换算为 2000 bit/s，实际 %.2f", got)
+	}
+}
+
 func TestParseAliyunTimeSupportsMinutePrecision(t *testing.T) {
 	parsed, ok := parseAliyunTime("2026-05-21T09:59Z")
 	if !ok {

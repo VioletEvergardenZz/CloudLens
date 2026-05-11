@@ -256,6 +256,7 @@ func (c *Client) MetricWithDimensions(metricName string, dimensions map[string]s
 		RegionID:   region,
 		Namespace:  NamespaceECS,
 		MetricName: metricName,
+		Unit:       aliyunMetricUnit(metricName),
 		Period:     firstNonEmpty(resp.Period, period),
 		Points:     points,
 	}, nil
@@ -300,15 +301,15 @@ func (c *Client) InstanceMonitorMetrics(instanceID, region string, minutes int, 
 		return items[i].TimeStamp < items[j].TimeStamp
 	})
 	out := map[string]*MetricSeries{
-		"cpu":               newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.CPU", period),
-		"internetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetRX", period),
-		"internetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetTX", period),
-		"intranetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetRX", period),
-		"intranetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetTX", period),
-		"internetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetBandwidth", period),
-		"intranetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetBandwidth", period),
-		"diskReadBps":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSRead", period),
-		"diskWriteBps":      newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSWrite", period),
+		"cpu":               newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.CPU", period, "%"),
+		"internetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetRX", period, "bit/s"),
+		"internetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetTX", period, "bit/s"),
+		"intranetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetRX", period, "bit/s"),
+		"intranetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetTX", period, "bit/s"),
+		"internetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetBandwidth", period, "bit/s"),
+		"intranetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetBandwidth", period, "bit/s"),
+		"diskReadBps":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSRead", period, "Byte/s"),
+		"diskWriteBps":      newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSWrite", period, "Byte/s"),
 	}
 	for _, item := range items {
 		timestamp := parseAliyunTimeMillis(item.TimeStamp)
@@ -456,12 +457,13 @@ func buildRDSMetricSeries(performanceKeys []rds.PerformanceKey, dbInstanceID, re
 	return out
 }
 
-func newMetricSeries(instanceID, region, metricName, period string) *MetricSeries {
+func newMetricSeries(instanceID, region, metricName, period, unit string) *MetricSeries {
 	return &MetricSeries{
 		InstanceID: instanceID,
 		RegionID:   region,
 		Namespace:  "acs_ecs",
 		MetricName: metricName,
+		Unit:       unit,
 		Period:     period,
 		Points:     []MetricPoint{},
 	}
@@ -479,6 +481,23 @@ func trafficKbitToBitRate(valueKbit int, periodSeconds int) float64 {
 		periodSeconds = 60
 	}
 	return float64(valueKbit*1000) / float64(periodSeconds)
+}
+
+func aliyunMetricUnit(metricName string) string {
+	metricName = strings.TrimSpace(metricName)
+	switch metricName {
+	case "CPUUtilization", "cpu_total", "memory_usedutilization", "diskusage_utilization":
+		return "%"
+	case "InternetInRate", "InternetOutRate", "IntranetInRate", "IntranetOutRate",
+		"VPC_PublicIP_InternetInRate", "VPC_PublicIP_InternetOutRate":
+		return "bit/s"
+	case "DiskReadBPS", "DiskWriteBPS", "disk_readbytes", "disk_writebytes":
+		return "Byte/s"
+	case "load_1m":
+		return ""
+	default:
+		return ""
+	}
 }
 
 func parseAliyunTimeMillis(raw string) int64 {

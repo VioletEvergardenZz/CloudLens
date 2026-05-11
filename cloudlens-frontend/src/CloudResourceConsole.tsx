@@ -6,7 +6,7 @@
 
 /* 本文件用于普通后台 Web 页面，融合 Komari 的探针监控视角和云镜当前的多云监控主线 */
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, USE_MOCK, buildApiHeaders } from "./console/dashboardApi";
 import "./CloudResourceConsole.css";
 
@@ -26,7 +26,7 @@ type Provider = "aliyun" | "huawei" | "tencent";
 type AccountStatus = "normal" | "warning" | "syncing" | "disabled";
 type ServerStatus = "running" | "warning" | "offline" | "maintenance";
 type AgentStatus = "online" | "stale" | "missing" | "offline";
-type ScopeKind = "all" | "product" | "provider" | "providerProduct" | "account" | "accountProduct" | "accountProductRegion" | "accountRegion" | "region";
+type ScopeKind = "all" | "product" | "productProvider" | "productAccount" | "productAccountRegion" | "region";
 type ThemeMode = "light" | "dark";
 type PublicIpType = "public" | "eip" | "none";
 type ResourceType = "ecs" | "rds";
@@ -91,9 +91,9 @@ type CloudServer = {
   dbLockReason?: string;
   status: ServerStatus;
   agentStatus: AgentStatus;
-  cpu: number;
-  memory: number;
-  disk: number;
+  cpu?: number;
+  memory?: number;
+  disk?: number;
   load: string;
   uptime: string;
   lastSeen: string;
@@ -251,6 +251,16 @@ type AliyunRDSInstancesResponse = {
   error?: string;
 };
 
+type RDSStorageUsage = {
+  percent?: number;
+  metricName?: string;
+  subKey?: string;
+  unit?: string;
+  rawValue?: number;
+  storageGb?: number;
+  source: "percent" | "size" | "missing";
+};
+
 type ApiCloudAccount = {
   id: number;
   provider: Provider;
@@ -316,6 +326,15 @@ type MonitorMetric = {
   points: number;
   status: "ok" | "empty" | "error";
   note: string;
+};
+
+type RefreshState = "idle" | "syncing" | "ok" | "error";
+
+type AgentGroup = {
+  status: AgentStatus;
+  label: string;
+  description: string;
+  rows: CloudServer[];
 };
 
 const providerLabels: Record<Provider, string> = {
@@ -403,6 +422,7 @@ const emptyCloudServer: CloudServer = {
 const SIDEBAR_STORAGE_KEY = "gwf-cloud-sidebar-hidden";
 const THEME_STORAGE_KEY = "gwf-cloud-theme";
 const ASSET_REFRESH_INTERVAL_MS = 30_000;
+const ASSET_REFRESH_INTERVAL_SECONDS = ASSET_REFRESH_INTERVAL_MS / 1000;
 
 const emptyAccountForm: CloudAccountForm = {
   provider: "aliyun",
@@ -1041,6 +1061,14 @@ const resolveExpirationInfo = (source: {
   };
 };
 
+const compactExpirationText = (expiration: ReturnType<typeof resolveExpirationInfo>) => {
+  if (expiration.status === "unknown") return "未知";
+  if (expiration.status === "no_expiration") return "无固定";
+  if (expiration.status === "expired") return "已到期";
+  if (typeof expiration.expiresInDays === "number") return `${expiration.expiresInDays}天`;
+  return expiration.text || "--";
+};
+
 const metricSortLabels: Record<ServerSortKey, string> = {
   cpu: "CPU",
   memory: "内存",
@@ -1071,7 +1099,12 @@ const sortServersByMetric = (
       if (result !== 0) return metricSort.direction === "asc" ? result : -result;
       return left.name.localeCompare(right.name, "zh-CN");
     }
-    const result = left[metricSort.key] - right[metricSort.key];
+    const leftMetric = left[metricSort.key];
+    const rightMetric = right[metricSort.key];
+    if (typeof leftMetric !== "number" && typeof rightMetric !== "number") return left.name.localeCompare(right.name, "zh-CN");
+    if (typeof leftMetric !== "number") return 1;
+    if (typeof rightMetric !== "number") return -1;
+    const result = leftMetric - rightMetric;
     if (result !== 0) return metricSort.direction === "asc" ? result : -result;
     return left.name.localeCompare(right.name, "zh-CN");
   });
@@ -1180,18 +1213,90 @@ const latestRDSMetricValue = (overview: AliyunOverviewResponse | undefined, incl
   return selected;
 };
 
-const resolveRDSStoragePercent = (overview: AliyunOverviewResponse | undefined, instance: AliyunRDSInstance) => {
+const isPercentSeries = (series: AliyunMetricSeries) => {
+  const unit = series.unit?.trim().toLowerCase() ?? "";
+  const identity = metricIdentity(series);
+  return unit.includes("%") || unit.includes("percent") || identity.includes("percent") || identity.includes("ratio");
+};
+
+const isStorageSizeSeries = (series: AliyunMetricSeries) => {
+  const unit = series.unit?.trim().toLowerCase() ?? "";
+  return (
+    unit.includes("byte") ||
+    unit.includes("kb") ||
+    unit.includes("mb") ||
+    unit.includes("gb") ||
+    unit.includes("kilobyte") ||
+    unit.includes("megabyte") ||
+    unit.includes("gigabyte")
+  );
+};
+
+const isRDSStorageTotalSubKey = (series: AliyunMetricSeries) => {
+  const identity = metricIdentity(series);
+  return ["ins_size", "instance_size", "total_size", "totalspace", "total_space"].some((key) => identity.includes(key));
+};
+
+const rdsStoragePriority = (series: AliyunMetricSeries) => {
+  const identity = metricIdentity(series);
+  if (isRDSStorageTotalSubKey(series)) return 0;
+  if (identity.includes("data_size") || identity.includes("datausage") || identity.includes("data_space")) return 1;
+  if (identity.includes("used") || identity.includes("usage")) return 2;
+  return 3;
+};
+
+const latestRDSStorageSizeMetric = (overview: AliyunOverviewResponse | undefined) => {
+  let selected: { series: AliyunMetricSeries; point: AliyunMetricPoint; priority: number } | undefined;
+  for (const series of Object.values(overview?.metrics ?? {})) {
+    const identity = metricIdentity(series);
+    if (!identity.includes("spaceusage") && !identity.includes("diskusage")) continue;
+    if (identity.includes("iops") || identity.includes("mbps") || identity.includes("rate")) continue;
+    if (isPercentSeries(series) || !isStorageSizeSeries(series)) continue;
+    const point = latestPoint(series.points);
+    if (!point) continue;
+    const priority = rdsStoragePriority(series);
+    if (!selected || priority < selected.priority || (priority === selected.priority && point.timestamp > selected.point.timestamp)) {
+      selected = { series, point, priority };
+    }
+  }
+  return selected;
+};
+
+const rdsStorageValueToMb = (series: AliyunMetricSeries, value: number) => {
+  const unit = series.unit?.trim().toLowerCase() ?? "";
+  if (unit.includes("gb") || unit.includes("gbyte") || unit.includes("gigabyte")) return value * 1024;
+  if (unit.includes("kb") || unit.includes("kbyte") || unit.includes("kilobyte")) return value / 1024;
+  if (unit.includes("byte") && !unit.includes("mbyte") && !unit.includes("megabyte")) return value / 1024 / 1024;
+  return value;
+};
+
+const resolveRDSStorageUsage = (overview: AliyunOverviewResponse | undefined, instance: AliyunRDSInstance): RDSStorageUsage => {
   const direct = latestRDSMetricValue(overview, ["diskusage", "storageusage", "spaceusage_percent"], ["iops", "mbps"]);
-  if (direct && (direct.series.unit?.includes("%") || direct.point.value <= 100)) {
-    return clampPercentMetric(direct.point.value);
+  if (direct && isPercentSeries(direct.series)) {
+    return {
+      percent: clampPercentMetric(direct.point.value),
+      metricName: direct.series.metricName,
+      subKey: direct.series.subKey,
+      unit: direct.series.unit,
+      rawValue: direct.point.value,
+      storageGb: instance.storageGb,
+      source: "percent",
+    };
   }
-  const usedSpace = latestRDSMetricValue(overview, ["detailedspaceusage", "spaceusage"], ["iops", "mbps"]);
+  const usedSpace = latestRDSStorageSizeMetric(overview);
   if (usedSpace && instance.storageGb && instance.storageGb > 0) {
-    const unit = usedSpace.series.unit?.toLowerCase() ?? "";
-    const usedMb = unit.includes("gb") ? usedSpace.point.value * 1024 : usedSpace.point.value;
-    return clampPercentMetric((usedMb / (instance.storageGb * 1024)) * 100);
+    const usedMb = rdsStorageValueToMb(usedSpace.series, usedSpace.point.value);
+    return {
+      percent: clampPercentMetric((usedMb / (instance.storageGb * 1024)) * 100),
+      metricName: usedSpace.series.metricName,
+      subKey: usedSpace.series.subKey,
+      unit: usedSpace.series.unit,
+      rawValue: usedSpace.point.value,
+      storageGb: instance.storageGb,
+      source: "size",
+    };
   }
-  return 0;
+  return { storageGb: instance.storageGb, source: "missing" };
 };
 
 const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance, overview?: AliyunOverviewResponse): CloudServer => {
@@ -1207,6 +1312,7 @@ const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance
   const cpuMetric = latestRDSMetricValue(overview, ["cpu"], ["proxy"]);
   const memoryMetric = latestRDSMetricValue(overview, ["mem", "memory"], ["proxy"]);
   const qpsMetric = latestRDSMetricValue(overview, ["qps"]);
+  const storageUsage = resolveRDSStorageUsage(overview, instance);
   const primaryEndpoint = instance.endpoints?.find((endpoint) => endpoint.connectionString?.trim()) ?? instance.endpoints?.[0];
   const connectionString = instance.connectionString?.trim() || primaryEndpoint?.connectionString?.trim() || "-";
   const port = instance.port?.trim() || primaryEndpoint?.port?.trim() || "";
@@ -1256,7 +1362,7 @@ const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance
     agentStatus: serverStatus === "offline" ? "offline" : freshness.status,
     cpu: clampPercentMetric(cpuMetric?.point.value),
     memory: clampPercentMetric(memoryMetric?.point.value),
-    disk: resolveRDSStoragePercent(overview, instance),
+    disk: storageUsage.percent,
     load: qpsMetric ? qpsMetric.point.value.toFixed(2) : "--",
     uptime: formatUptimeFromCreatedAt(instance.createdAt, instance.status),
     lastSeen,
@@ -1272,15 +1378,15 @@ const monitorMetricMeta: Array<{ key: MonitorMetricKey; label: string; unit: str
   { key: "memory", label: "内存", unit: "%" },
   { key: "disk", label: "磁盘", unit: "%" },
   { key: "load1m", label: "1 分钟负载", unit: "" },
-  { key: "internetIn", label: "公网入", unit: "B/s" },
-  { key: "internetOut", label: "公网出", unit: "B/s" },
-  { key: "internetTotal", label: "公网总带宽", unit: "B/s" },
+  { key: "internetIn", label: "公网入", unit: "bit/s" },
+  { key: "internetOut", label: "公网出", unit: "bit/s" },
+  { key: "internetTotal", label: "公网总带宽", unit: "bit/s" },
   { key: "internetBandwidth", label: "公网带宽", unit: "bit/s" },
-  { key: "intranetIn", label: "内网入", unit: "B/s" },
-  { key: "intranetOut", label: "内网出", unit: "B/s" },
-  { key: "intranetTotal", label: "内网总带宽", unit: "B/s" },
+  { key: "intranetIn", label: "内网入", unit: "bit/s" },
+  { key: "intranetOut", label: "内网出", unit: "bit/s" },
+  { key: "intranetTotal", label: "内网总带宽", unit: "bit/s" },
   { key: "intranetBandwidth", label: "内网带宽", unit: "bit/s" },
-  { key: "networkTotal", label: "总带宽", unit: "B/s" },
+  { key: "networkTotal", label: "总带宽", unit: "bit/s" },
   { key: "diskReadBps", label: "磁盘读速率", unit: "B/s" },
   { key: "diskWriteBps", label: "磁盘写速率", unit: "B/s" },
 ];
@@ -1296,13 +1402,32 @@ const formatRateValue = (value: number, unit: "bit/s" | "B/s") => {
   return `${value.toFixed(2)} B/s`;
 };
 
-const formatMetricValue = (key: MonitorMetricKey, value: number) => {
-  if (key === "cpu" || key === "memory" || key === "disk") {
-    return formatPercentValue(value);
-  }
-  if (key === "load1m") return value.toFixed(2);
-  if (key === "diskReadBps" || key === "diskWriteBps") return formatRateValue(value, "B/s");
+const normalizeMetricUnit = (unit?: string) => {
+  const raw = (unit ?? "").trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return "";
+  if (lower === "bit/s" || lower === "bits/s" || lower === "bps") return "bit/s";
+  if (lower === "byte/s" || lower === "bytes/s" || lower === "b/s") return "B/s";
+  if (raw === "%") return "%";
+  return raw;
+};
+
+const displayMetricUnit = (series: AliyunMetricSeries | undefined, fallback: string) => normalizeMetricUnit(series?.unit) || fallback;
+
+const isByteRateUnit = (unit: string) => unit === "B/s";
+const isBitRateUnit = (unit: string) => unit === "bit/s";
+
+const formatMetricRateByUnit = (value: number, unit: string) => {
+  if (isByteRateUnit(unit)) return formatRateValue(value, "B/s");
   return formatRateValue(value, "bit/s");
+};
+
+const formatMonitorMetricValue = (key: MonitorMetricKey, value: number, unit: string) => {
+  if (unit === "%") return formatPercentValue(value);
+  if (key === "load1m") return value.toFixed(2);
+  if (isBitRateUnit(unit) || isByteRateUnit(unit)) return formatMetricRateByUnit(value, unit);
+  if (unit) return `${value.toFixed(2)} ${unit}`;
+  return value.toFixed(2);
 };
 
 const latestPoint = (points?: AliyunMetricPoint[]) => {
@@ -1313,7 +1438,7 @@ const latestPoint = (points?: AliyunMetricPoint[]) => {
 const hasMetricPoint = (series?: AliyunMetricSeries) => Boolean(latestPoint(series?.points));
 
 const clampPercentMetric = (value?: number) => {
-  if (typeof value !== "number" || Number.isNaN(value)) return 0;
+  if (typeof value !== "number" || Number.isNaN(value)) return undefined;
   return Math.max(0, Math.min(100, value));
 };
 
@@ -1360,15 +1485,15 @@ const mergeServerRowsWithPrevious = (
     const next = { ...server };
     let reusedPreviousMetric = false;
 
-    if (!hasMetricPoint(metrics.cpu) && previous.cpu > 0) {
+    if (!hasMetricPoint(metrics.cpu) && typeof previous.cpu === "number" && previous.cpu > 0) {
       next.cpu = previous.cpu;
       reusedPreviousMetric = true;
     }
-    if (!hasMetricPoint(metrics.memory) && previous.memory > 0) {
+    if (!hasMetricPoint(metrics.memory) && typeof previous.memory === "number" && previous.memory > 0) {
       next.memory = previous.memory;
       reusedPreviousMetric = true;
     }
-    if (!hasMetricPoint(metrics.disk) && previous.disk > 0) {
+    if (!hasMetricPoint(metrics.disk) && typeof previous.disk === "number" && previous.disk > 0) {
       next.disk = previous.disk;
       reusedPreviousMetric = true;
     }
@@ -1419,6 +1544,8 @@ const buildDerivedSeries = (metricName: string, seriesList: Array<AliyunMetricSe
   const validSeries = seriesList.filter((series): series is AliyunMetricSeries => Boolean(series?.points?.length));
   if (validSeries.length !== seriesList.length || !validSeries.length) return undefined;
   const baseline = validSeries[0]?.points ?? [];
+  const unit = normalizeMetricUnit(validSeries[0]?.unit);
+  if (validSeries.some((series) => normalizeMetricUnit(series.unit) !== unit)) return undefined;
   const extraMaps = validSeries.slice(1).map((series) => new Map((series.points ?? []).map((point) => [point.timestamp, point.value])));
   const points = baseline.flatMap((point) => {
     let total = point.value;
@@ -1430,7 +1557,7 @@ const buildDerivedSeries = (metricName: string, seriesList: Array<AliyunMetricSe
     return [{ timestamp: point.timestamp, value: total }];
   });
   if (!points.length) return undefined;
-  return { namespace: "derived", metricName, points };
+  return { namespace: "derived", metricName, unit, points };
 };
 
 const derivedMetricKeys = new Set<MonitorMetricKey>(["internetTotal", "intranetTotal", "networkTotal"]);
@@ -1460,6 +1587,12 @@ const formatAgeText = (ageMs: number) => {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return minutes > 0 ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`;
+};
+
+const formatRefreshCountdown = (nextRefreshAt: number, now: number) => {
+  if (!nextRefreshAt) return "--";
+  const seconds = Math.max(0, Math.ceil((nextRefreshAt - now) / 1000));
+  return `${seconds} 秒`;
 };
 
 const latestMetricSnapshot = (overview?: AliyunOverviewResponse) => {
@@ -1527,22 +1660,17 @@ const metricSourceLabel = (series?: AliyunMetricSeries) => {
   return namespace || "未知来源";
 };
 
-const formatMetricDelta = (key: MonitorMetricKey, value: number) => {
+const formatMonitorMetricDelta = (key: MonitorMetricKey, value: number, unit: string) => {
   const sign = value > 0 ? "+" : value < 0 ? "-" : "";
   const abs = Math.abs(value);
-  if (key === "cpu" || key === "memory" || key === "disk") {
-    return `${sign}${abs.toFixed(2)} pct`;
-  }
-  if (key === "load1m") {
-    return `${sign}${abs.toFixed(2)}`;
-  }
-  if (key === "diskReadBps" || key === "diskWriteBps") {
-    return `${sign}${formatRateValue(abs, "B/s")}`;
-  }
-  return `${sign}${formatRateValue(abs, "bit/s")}`;
+  if (unit === "%") return `${sign}${abs.toFixed(2)} pct`;
+  if (key === "load1m") return `${sign}${abs.toFixed(2)}`;
+  if (isBitRateUnit(unit) || isByteRateUnit(unit)) return `${sign}${formatMetricRateByUnit(abs, unit)}`;
+  if (unit) return `${sign}${abs.toFixed(2)} ${unit}`;
+  return `${sign}${abs.toFixed(2)}`;
 };
 
-const buildMetricTrend = (key: MonitorMetricKey, points?: AliyunMetricPoint[]) => {
+const buildMonitorMetricTrend = (key: MonitorMetricKey, unit: string, points?: AliyunMetricPoint[]) => {
   const recentPoints = recentMetricPoints(points);
   if (!recentPoints.length) return "--";
   if (recentPoints.length === 1) return "单点采样";
@@ -1551,24 +1679,30 @@ const buildMetricTrend = (key: MonitorMetricKey, points?: AliyunMetricPoint[]) =
   if (!first || !latest) return "--";
   const delta = latest.value - first.value;
   if (Math.abs(delta) < 0.0001) return "近窗基本持平";
-  return `${delta > 0 ? "上升" : "下降"} ${formatMetricDelta(key, delta)}`;
+  return `${delta > 0 ? "上升" : "下降"} ${formatMonitorMetricDelta(key, delta, unit)}`;
 };
 
-const buildRecentSamples = (key: MonitorMetricKey, points?: AliyunMetricPoint[]) =>
-  recentMetricPoints(points, 6).map((point) => `${formatMetricShortTime(point.timestamp)} ${formatMetricValue(key, point.value)}`);
+const buildMonitorRecentSamples = (key: MonitorMetricKey, unit: string, points?: AliyunMetricPoint[]) =>
+  recentMetricPoints(points, 6).map((point) => `${formatMetricShortTime(point.timestamp)} ${formatMonitorMetricValue(key, point.value, unit)}`);
 
-const buildSparklinePath = (points: AliyunMetricPoint[], width = 112, height = 28) => {
-  if (points.length < 2) return "";
+const buildMetricPointCoordinates = (points: AliyunMetricPoint[], width: number, height: number, padding = 0) => {
+  if (points.length < 2) return [];
+  const chartWidth = Math.max(1, width - padding * 2);
+  const chartHeight = Math.max(1, height - padding * 2);
   const values = points.map((point) => point.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  return points
-    .map((point, index) => {
-      const x = (index / Math.max(1, points.length - 1)) * width;
-      const y = height - ((point.value - min) / range) * height;
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
+  return points.map((point, index) => ({
+    x: padding + (index / Math.max(1, points.length - 1)) * chartWidth,
+    y: padding + chartHeight - ((point.value - min) / range) * chartHeight,
+  }));
+};
+
+const buildSparklinePath = (points: AliyunMetricPoint[], width = 112, height = 28, padding = 0) => {
+  if (points.length < 2) return "";
+  return buildMetricPointCoordinates(points, width, height, padding)
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(" ");
 };
 
@@ -1581,11 +1715,15 @@ const buildMetricNote = (
   const source = metricSourceLabel(series);
   const period = series?.period ? `，周期 ${series.period}s` : "";
   const metricName = series?.metricName ? ` / ${series.metricName}` : "";
+  const unit = displayMetricUnit(series, "");
+  const unitText = unit ? `，单位 ${unit}` : "";
   if (latest) {
-    return `${source}${metricName}${period}`;
+    return `${source}${metricName}${unitText}${period}`;
   }
   if (error) return error;
   if (derivedMetricKeys.has(item.key)) return "依赖的入/出方向指标没有同时返回";
+  if (item.key === "disk" && series?.namespace === "SYS.ECS") return "华为云基础监控返回成功但没有磁盘采样点；请确认云服务器镜像内 UVP VMTools 正常，或安装/启用主机监控 Agent 后查看挂载点维度的磁盘指标";
+  if (item.key === "disk" && series?.namespace === "AGT.ECS") return "华为云 Agent 磁盘指标通常按挂载点上报，当前实例维度没有采样点；后续可按挂载点维度扩展查询";
   if (pluginMetricKeys.has(item.key)) return "ECS 基础监控不包含该项，需云监控插件或 Agent 上报";
   if (series) return `${source}${metricName}${period}，接口返回成功但没有采样点`;
   return "云厂商未返回该指标";
@@ -1653,7 +1791,7 @@ const buildRDSMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] 
         average: summary ? formatRDSMetricValue(series, summary.average) : "--",
         sampledAt: formatMetricTime(latest?.timestamp) || "--",
         trend: buildRDSMetricTrend(series, points),
-        sparklinePoints: recentMetricPoints(points),
+        sparklinePoints: points,
         recentSamples: buildRDSRecentSamples(series, points),
         points: points.length,
         status: latest ? "ok" : "empty",
@@ -1695,19 +1833,21 @@ const buildMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => 
   ]);
   return monitorMetricMeta.map((item) => {
     const series = metrics[item.key];
+    const unit = displayMetricUnit(series, item.unit);
     const points = series?.points ?? [];
     const summary = summarizeMetricPoints(points);
     const latest = summary?.latest;
     const error = payload?.errors?.[item.key];
     return {
       ...item,
-      value: latest ? formatMetricValue(item.key, latest.value) : "--",
-      range: summary ? `${formatMetricValue(item.key, summary.min)} ~ ${formatMetricValue(item.key, summary.max)}` : "--",
-      average: summary ? formatMetricValue(item.key, summary.average) : "--",
+      unit,
+      value: latest ? formatMonitorMetricValue(item.key, latest.value, unit) : "--",
+      range: summary ? `${formatMonitorMetricValue(item.key, summary.min, unit)} ~ ${formatMonitorMetricValue(item.key, summary.max, unit)}` : "--",
+      average: summary ? formatMonitorMetricValue(item.key, summary.average, unit) : "--",
       sampledAt: formatMetricTime(latest?.timestamp) || "--",
-      trend: buildMetricTrend(item.key, points),
-      sparklinePoints: recentMetricPoints(points),
-      recentSamples: buildRecentSamples(item.key, points),
+      trend: buildMonitorMetricTrend(item.key, unit, points),
+      sparklinePoints: points,
+      recentSamples: buildMonitorRecentSamples(item.key, unit, points),
       points: points.length,
       status: latest ? "ok" : error ? "error" : "empty",
       note: buildMetricNote(item, latest, series, error),
@@ -1721,12 +1861,9 @@ const parseScope = (scope: string): { kind: ScopeKind; value: string } => {
   const [kind, ...rest] = scope.split(":");
   if (
     kind === "product" ||
-    kind === "provider" ||
-    kind === "providerProduct" ||
-    kind === "account" ||
-    kind === "accountProduct" ||
-    kind === "accountProductRegion" ||
-    kind === "accountRegion" ||
+    kind === "productProvider" ||
+    kind === "productAccount" ||
+    kind === "productAccountRegion" ||
     kind === "region"
   ) {
     return { kind, value: rest.join(":") };
@@ -1737,12 +1874,9 @@ const parseScope = (scope: string): { kind: ScopeKind; value: string } => {
 const serverMatchesScope = (server: CloudServer, parsedScope: { kind: ScopeKind; value: string }) => {
   const resourceType = getResourceType(server);
   if (parsedScope.kind === "product") return resourceType === parsedScope.value;
-  if (parsedScope.kind === "provider") return server.provider === parsedScope.value;
-  if (parsedScope.kind === "providerProduct") return `${server.provider}:${resourceType}` === parsedScope.value;
-  if (parsedScope.kind === "account") return server.accountId === parsedScope.value;
-  if (parsedScope.kind === "accountProduct") return `${server.accountId}:${resourceType}` === parsedScope.value;
-  if (parsedScope.kind === "accountProductRegion") return `${server.accountId}:${resourceType}:${server.region}` === parsedScope.value;
-  if (parsedScope.kind === "accountRegion") return `${server.accountId}:${server.region}` === parsedScope.value;
+  if (parsedScope.kind === "productProvider") return `${resourceType}:${server.provider}` === parsedScope.value;
+  if (parsedScope.kind === "productAccount") return `${resourceType}:${server.provider}:${server.accountId}` === parsedScope.value;
+  if (parsedScope.kind === "productAccountRegion") return `${resourceType}:${server.provider}:${server.accountId}:${server.region}` === parsedScope.value;
   if (parsedScope.kind === "region") return `${server.provider}:${server.region}` === parsedScope.value;
   return true;
 };
@@ -1779,7 +1913,15 @@ function StatusText({ children, status }: { children: string; status: string }) 
   return <span className={`status-text ${getStatusClass(status)}`}>{children}</span>;
 }
 
-function Utilization({ value }: { value: number }) {
+function Utilization({ value }: { value?: number }) {
+  if (typeof value !== "number") {
+    return (
+      <span className="usage usage-empty">
+        <i style={{ width: "0%" }} />
+        <b>--</b>
+      </span>
+    );
+  }
   const tone = value >= 80 ? "bad" : value >= 70 ? "warn" : "ok";
   return (
     <span className={`usage usage-${tone}`}>
@@ -1789,21 +1931,61 @@ function Utilization({ value }: { value: number }) {
   );
 }
 
-function MetricSparkline({ points, status }: { points: AliyunMetricPoint[]; status: MonitorMetric["status"] }) {
+function MetricLineChart({ points, status }: { points: AliyunMetricPoint[]; status: MonitorMetric["status"] }) {
   if (points.length < 2) {
-    return <span className="metric-sparkline-empty">{points.length === 1 ? "单点" : "无趋势"}</span>;
+    return (
+      <div className="metric-line-chart metric-line-chart-empty">
+        <span>{points.length === 1 ? "单点采样" : "暂无趋势"}</span>
+      </div>
+    );
   }
   const first = points[0];
   const latest = points.at(-1);
   const delta = (latest?.value ?? 0) - (first?.value ?? 0);
   const trendClass = status !== "ok" ? "muted" : delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-  const path = buildSparklinePath(points);
+  const chartWidth = 480;
+  const chartHeight = 168;
+  const chartPadding = 18;
+  const path = buildSparklinePath(points, chartWidth, chartHeight, chartPadding);
+  const coordinates = buildMetricPointCoordinates(points, chartWidth, chartHeight, chartPadding);
+  const latestCoordinate = coordinates.at(-1);
   return (
-    <div className={`metric-sparkline metric-sparkline-${trendClass}`}>
-      <svg viewBox="0 0 112 28" aria-hidden="true" focusable="false">
+    <div className={`metric-line-chart metric-line-chart-${trendClass}`}>
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} aria-hidden="true" focusable="false">
+        <line x1="0" y1="42" x2={chartWidth} y2="42" />
+        <line x1="0" y1="84" x2={chartWidth} y2="84" />
+        <line x1="0" y1="126" x2={chartWidth} y2="126" />
         <path d={path} pathLength={100} />
+        {latestCoordinate ? <circle cx={latestCoordinate.x} cy={latestCoordinate.y} r="3.8" /> : null}
       </svg>
     </div>
+  );
+}
+
+function MetricChartCard({ item }: { item: MonitorMetric }) {
+  return (
+    <article className={`monitor-chart-card monitor-chart-card-${item.status}`}>
+      <div className="monitor-chart-card-head">
+        <div>
+          <h4>{item.label}</h4>
+          <span>{item.unit || "无单位"} / {item.points} 个点</span>
+        </div>
+        <StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>
+          {item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}
+        </StatusText>
+      </div>
+      <div className="monitor-chart-value-row">
+        <strong>{item.value}</strong>
+        <span>{item.trend}</span>
+      </div>
+      <MetricLineChart points={item.sparklinePoints} status={item.status} />
+      <div className="monitor-chart-stats">
+        <span><b>范围</b>{item.range}</span>
+        <span><b>均值</b>{item.average}</span>
+        <span><b>采样</b>{item.sampledAt}</span>
+      </div>
+      {item.status !== "ok" ? <p className="monitor-chart-note">{item.note}</p> : null}
+    </article>
   );
 }
 
@@ -1816,6 +1998,7 @@ export function CloudResourceConsole() {
   const [lastSyncAt, setLastSyncAt] = useState("--");
   const [scope, setScope] = useState(buildScopeKey("all"));
   const [keyword, setKeyword] = useState("");
+  const [resourceFilter, setResourceFilter] = useState<ResourceType | "all">("all");
   const [statusFilter, setStatusFilter] = useState<ServerStatus | "all">("all");
   const [agentFilter, setAgentFilter] = useState<AgentStatus | "all">("all");
   const [selectedServerId, setSelectedServerId] = useState(servers[0]?.id ?? "");
@@ -1830,6 +2013,9 @@ export function CloudResourceConsole() {
   const [accountNotice, setAccountNotice] = useState("");
   const [expandedTree, setExpandedTree] = useState<Record<string, boolean>>({});
   const [metricSort, setMetricSort] = useState<{ key: ServerSortKey; direction: SortDirection } | null>(null);
+  const [refreshState, setRefreshState] = useState<RefreshState>(() => (USE_MOCK ? "ok" : "syncing"));
+  const [nextRefreshAt, setNextRefreshAt] = useState<number>(() => (USE_MOCK ? 0 : Date.now() + ASSET_REFRESH_INTERVAL_MS));
+  const [refreshNow, setRefreshNow] = useState(Date.now());
   const assetLoadingRef = useRef(false);
 
   useEffect(() => {
@@ -1842,12 +2028,20 @@ export function CloudResourceConsole() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (USE_MOCK || typeof window === "undefined") return;
+    const timer = window.setInterval(() => setRefreshNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const loadCloudAssets = async (options: { silent?: boolean } = {}) => {
     if (assetLoadingRef.current) return false;
     assetLoadingRef.current = true;
+    setRefreshState("syncing");
     if (USE_MOCK) {
       setAssetLoading(false);
       setLastSyncAt("示例模式");
+      setRefreshState("ok");
       assetLoadingRef.current = false;
       return true;
     }
@@ -1927,6 +2121,21 @@ export function CloudResourceConsole() {
                   const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
                   const server = mapAliyunRDSResource(account, instance, overviewResp.ok ? overview : undefined);
                   if (overviewResp.ok) {
+                    const storageUsage = resolveRDSStorageUsage(overview, instance);
+                    console.info("[CloudLens] RDS 磁盘换算", {
+                      account: account.name,
+                      instanceId: instance.id,
+                      instanceName: instance.name,
+                      metricName: storageUsage.metricName,
+                      subKey: storageUsage.subKey,
+                      unit: storageUsage.unit,
+                      rawValue: storageUsage.rawValue,
+                      storageGb: storageUsage.storageGb,
+                      percent: storageUsage.percent,
+                      source: storageUsage.source,
+                    });
+                  }
+                  if (overviewResp.ok) {
                     overviewMap[server.id] = overview;
                   } else {
                     overviewMap[server.id] = { ok: false, resource: "rds", error: overview.error || "RDS 性能数据读取失败" };
@@ -1956,9 +2165,13 @@ export function CloudResourceConsole() {
       if (errors.length) {
         setAssetError(errors.join("；"));
       }
+      setRefreshState(errors.length === 0 ? "ok" : "error");
+      setNextRefreshAt(Date.now() + ASSET_REFRESH_INTERVAL_MS);
       return errors.length === 0;
     } catch (error) {
       setAssetError(error instanceof Error ? error.message : "云资源同步失败");
+      setRefreshState("error");
+      setNextRefreshAt(Date.now() + ASSET_REFRESH_INTERVAL_MS);
       return false;
     } finally {
       assetLoadingRef.current = false;
@@ -2179,12 +2392,16 @@ export function CloudResourceConsole() {
     const firstServer = servers.find((server) => serverMatchesScope(server, nextParsedScope));
     setScope(nextScope);
     setSelectedServerId(firstServer?.id ?? "");
+    if (nextParsedScope.kind === "product" || nextParsedScope.kind === "productProvider" || nextParsedScope.kind === "productAccount" || nextParsedScope.kind === "productAccountRegion") {
+      setResourceFilter("all");
+    }
   };
 
   const visibleServers = useMemo(() => {
     const text = keyword.trim().toLowerCase();
     const rows = servers.filter((server) => {
       if (!serverMatchesScope(server, parsedScope)) return false;
+      if (resourceFilter !== "all" && getResourceType(server) !== resourceFilter) return false;
       if (statusFilter !== "all" && server.status !== statusFilter) return false;
       if (agentFilter !== "all" && server.agentStatus !== agentFilter) return false;
       if (!text) return true;
@@ -2209,12 +2426,12 @@ export function CloudResourceConsole() {
         .includes(text);
     });
     return sortServersByMetric(rows, metricSort);
-  }, [agentFilter, getAccount, keyword, metricSort, parsedScope, servers, statusFilter]);
+  }, [agentFilter, getAccount, keyword, metricSort, parsedScope, resourceFilter, servers, statusFilter]);
 
   const monitorServers = useMemo(() => sortServersByMetric(servers, metricSort), [metricSort, servers]);
 
   const selectedServer = useMemo(() => {
-    if (activePage === "monitor") return servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? emptyCloudServer;
+    if (activePage === "monitor" || activePage === "agents") return servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? emptyCloudServer;
     return visibleServers.find((server) => server.id === selectedServerId) ?? visibleServers[0] ?? servers[0] ?? emptyCloudServer;
   }, [activePage, selectedServerId, servers, visibleServers]);
 
@@ -2235,6 +2452,39 @@ export function CloudResourceConsole() {
       if (status === "expiring") expiring += 1;
     });
     return { expiring };
+  }, [servers]);
+
+  const refreshSummary = useMemo(() => {
+    if (USE_MOCK) return "示例模式不自动请求后端";
+    if (refreshState === "syncing") return "正在刷新云账号、资源与监控采样";
+    const countdown = formatRefreshCountdown(nextRefreshAt, refreshNow);
+    const prefix = refreshState === "error" ? "上次刷新异常" : "自动刷新已开启";
+    return `${prefix}，每 ${ASSET_REFRESH_INTERVAL_SECONDS} 秒刷新一次，下一轮约 ${countdown} 后`;
+  }, [nextRefreshAt, refreshNow, refreshState]);
+
+  const monitorSummary = useMemo(() => {
+    const online = servers.filter((server) => server.agentStatus === "online").length;
+    const stale = servers.filter((server) => server.agentStatus === "stale").length;
+    const missing = servers.filter((server) => server.agentStatus === "missing").length;
+    const offline = servers.filter((server) => server.agentStatus === "offline").length;
+    return { online, stale, missing, offline };
+  }, [servers]);
+
+  const agentGroups = useMemo<AgentGroup[]>(() => {
+    const descriptions: Record<AgentStatus, string> = {
+      online: "云厂商返回的采样时间在可接受窗口内",
+      stale: "接口可用但采样偏旧，或本轮暂未返回新采样",
+      missing: "暂未拿到云监控采样点，需要检查权限、地域或 Agent/插件状态",
+      offline: "资源已离线，监控采样不可用",
+    };
+    return (["online", "stale", "missing", "offline"] as AgentStatus[])
+      .map((status) => ({
+        status,
+        label: agentStatusLabels[status],
+        description: descriptions[status],
+        rows: servers.filter((server) => server.agentStatus === status),
+      }))
+      .filter((group) => group.rows.length > 0 || group.status !== "offline");
   }, [servers]);
 
   const regionRows = useMemo(() => {
@@ -2299,10 +2549,11 @@ export function CloudResourceConsole() {
           const account = getAccount(server.accountId);
           const resourceType = getResourceType(server);
           const expiration = resolveExpirationInfo(server);
+          const expirationShortText = compactExpirationText(expiration);
           const expirationSubText = expiration.dateText
-            ? `到期 ${expiration.dateText}`
+            ? expiration.dateText
             : expiration.status === "no_expiration"
-              ? "无固定到期"
+              ? expiration.chargeText
               : expiration.status === "unknown"
                 ? "待云厂商返回"
                 : expiration.chargeText;
@@ -2340,7 +2591,7 @@ export function CloudResourceConsole() {
                 <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
               </td>
               <td className="expiration-cell" title={expiration.dateText ? `${expiration.text}，到期日 ${expiration.dateText}` : expiration.message || expiration.text}>
-                <StatusText status={expiration.status}>{expiration.text}</StatusText>
+                <StatusText status={expiration.status}>{expirationShortText}</StatusText>
                 <span>{expirationSubText}</span>
               </td>
             </tr>
@@ -2359,118 +2610,87 @@ export function CloudResourceConsole() {
     <aside className="resource-tree" aria-label="资源范围">
       <div className="resource-tree-title">
         <strong>资源范围</strong>
-        <span>按云平台 / 账号 / 地域筛选</span>
+        <span>按云资产 / 云平台 / 账号 / 地域筛选</span>
       </div>
       <button className={scope === buildScopeKey("all") ? "tree-node root active" : "tree-node root"} onClick={() => selectScope(buildScopeKey("all"))}>
-        <span className="tree-label">全部云平台</span>
+        <span className="tree-label">全部云资产</span>
         <em>{servers.length}</em>
       </button>
-      <div className="tree-group product-overview">
-        {resourceTypes.map((resourceType) => {
-          const productServers = servers.filter((server) => getResourceType(server) === resourceType);
-          return (
-            <button
-              className={scope === buildScopeKey("product", resourceType) ? "tree-node product active" : "tree-node product"}
-              key={resourceType}
-              onClick={() => selectScope(buildScopeKey("product", resourceType))}
-            >
-              <span className="tree-label">全部 {resourceTypeLabels[resourceType]}</span>
-              <em>{productServers.length}</em>
-            </button>
-          );
-        })}
-      </div>
-      {(["aliyun", "huawei", "tencent"] as Provider[]).map((provider) => {
-        const providerKey = `provider:${provider}`;
-        const providerExpanded = isTreeExpanded(providerKey);
-        const providerServers = servers.filter((server) => server.provider === provider);
-        const providerAccounts = accounts.filter((account) => account.provider === provider);
-        if (!providerServers.length && !providerAccounts.length) return null;
+      {resourceTypes.map((resourceType) => {
+        const productKey = `product:${resourceType}`;
+        const productExpanded = isTreeExpanded(productKey);
+        const productServers = servers.filter((server) => getResourceType(server) === resourceType);
+        if (!productServers.length) return null;
         return (
-          <div className="tree-group" key={provider}>
+          <div className="tree-group" key={resourceType}>
             <div className="tree-line">
-              <button className={providerExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(providerKey)} aria-label={providerExpanded ? "收起云平台" : "展开云平台"}>
+              <button className={productExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(productKey)} aria-label={productExpanded ? "收起云资产" : "展开云资产"}>
                 <span className="tree-caret" />
               </button>
               <button
-                className={scope === buildScopeKey("provider", provider) ? "tree-node provider active" : "tree-node provider"}
-                onClick={() => selectScope(buildScopeKey("provider", provider))}
+                className={scope === buildScopeKey("product", resourceType) ? "tree-node product active" : "tree-node product"}
+                onClick={() => selectScope(buildScopeKey("product", resourceType))}
               >
-                <span className="tree-label">{providerLabels[provider]}</span>
-                <em>{providerServers.length}</em>
+                <span className="tree-label">{resourceTypeLabels[resourceType]}</span>
+                <em>{productServers.length}</em>
               </button>
             </div>
-            {providerExpanded
+            {productExpanded
               ? (
-                <>
-                  {resourceTypes.map((resourceType) => {
-                    const providerProductKey = `providerProduct:${provider}:${resourceType}`;
-                    const productServers = providerServers.filter((server) => getResourceType(server) === resourceType);
-                    if (!productServers.length) return null;
-                    return (
-                      <button
-                        className={scope === buildScopeKey("providerProduct", `${provider}:${resourceType}`) ? "tree-node product active" : "tree-node product"}
-                        key={providerProductKey}
-                        onClick={() => selectScope(buildScopeKey("providerProduct", `${provider}:${resourceType}`))}
-                      >
-                        <span className="tree-label">{resourceTypeLabels[resourceType]}</span>
-                        <em>{productServers.length}</em>
-                      </button>
-                    );
-                  })}
-                  {providerAccounts.map((account) => {
-                  const accountKey = `account:${account.id}`;
-                  const accountExpanded = isTreeExpanded(accountKey);
-                  const accountServers = servers.filter((server) => server.accountId === account.id);
+                (["aliyun", "huawei", "tencent"] as Provider[]).map((provider) => {
+                  const providerKey = `productProvider:${resourceType}:${provider}`;
+                  const providerExpanded = isTreeExpanded(providerKey);
+                  const providerServers = productServers.filter((server) => server.provider === provider);
+                  const providerAccounts = accounts.filter((account) => account.provider === provider && providerServers.some((server) => server.accountId === account.id));
+                  if (!providerServers.length) return null;
                   return (
-                    <div className="account-branch" key={account.id}>
+                    <div className="provider-branch" key={`${resourceType}:${provider}`}>
                       <div className="tree-line">
-                        <button className={accountExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(accountKey)} aria-label={accountExpanded ? "收起账号" : "展开账号"}>
+                        <button className={providerExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(providerKey)} aria-label={providerExpanded ? "收起云平台" : "展开云平台"}>
                           <span className="tree-caret" />
                         </button>
                         <button
-                          className={scope === buildScopeKey("account", account.id) ? "tree-node account active" : "tree-node account"}
-                          onClick={() => selectScope(buildScopeKey("account", account.id))}
+                          className={scope === buildScopeKey("productProvider", `${resourceType}:${provider}`) ? "tree-node provider active" : "tree-node provider"}
+                          onClick={() => selectScope(buildScopeKey("productProvider", `${resourceType}:${provider}`))}
                         >
-                          <span className="tree-label">{account.name}</span>
-                          <em>{accountServers.length}</em>
+                          <span className="tree-label">{providerLabels[provider]}</span>
+                          <em>{providerServers.length}</em>
                         </button>
                       </div>
-                      {accountExpanded
-                        ? resourceTypes.map((resourceType) => {
-                            const productKey = `accountProduct:${account.id}:${resourceType}`;
-                            const productExpanded = isTreeExpanded(productKey);
-                            const productServers = accountServers.filter((server) => getResourceType(server) === resourceType);
-                            const productRegions = [...new Set(productServers.map((server) => server.region))];
-                            if (!productServers.length) return null;
+                      {providerExpanded
+                        ? providerAccounts.map((account) => {
+                            const accountKey = `productAccount:${resourceType}:${provider}:${account.id}`;
+                            const accountExpanded = isTreeExpanded(accountKey);
+                            const accountServers = providerServers.filter((server) => server.accountId === account.id);
+                            const accountRegions = [...new Set(accountServers.map((server) => server.region))];
                             return (
-                              <div className="product-branch" key={`${account.id}:${resourceType}`}>
+                              <div className="account-branch" key={`${resourceType}:${provider}:${account.id}`}>
                                 <div className="tree-line">
-                                  <button className={productExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(productKey)} aria-label={productExpanded ? "收起产品" : "展开产品"}>
+                                  <button className={accountExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(accountKey)} aria-label={accountExpanded ? "收起账号" : "展开账号"}>
                                     <span className="tree-caret" />
                                   </button>
                                   <button
-                                    className={scope === buildScopeKey("accountProduct", `${account.id}:${resourceType}`) ? "tree-node product active" : "tree-node product"}
-                                    onClick={() => selectScope(buildScopeKey("accountProduct", `${account.id}:${resourceType}`))}
+                                    className={scope === buildScopeKey("productAccount", `${resourceType}:${provider}:${account.id}`) ? "tree-node account active" : "tree-node account"}
+                                    onClick={() => selectScope(buildScopeKey("productAccount", `${resourceType}:${provider}:${account.id}`))}
                                   >
-                                    <span className="tree-label">{resourceTypeLabels[resourceType]}</span>
-                                    <em>{productServers.length}</em>
+                                    <span className="tree-label">{account.name}</span>
+                                    <em>{accountServers.length}</em>
                                   </button>
                                 </div>
-                                {productExpanded
-                                  ? productRegions.map((region) => {
-                                      const regionKey = `accountProductRegion:${account.id}:${resourceType}:${region}`;
+                                {accountExpanded
+                                  ? accountRegions.map((region) => {
+                                      const regionKey = `productAccountRegion:${resourceType}:${provider}:${account.id}:${region}`;
                                       const regionExpanded = isTreeExpanded(regionKey);
-                                      const regionServers = productServers.filter((server) => server.region === region);
+                                      const regionServers = accountServers.filter((server) => server.region === region);
                                       return (
-                                        <div className="region-branch" key={`${account.id}:${resourceType}:${region}`}>
+                                        <div className="region-branch" key={`${resourceType}:${provider}:${account.id}:${region}`}>
                                           <div className="tree-line">
                                             <button className={regionExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(regionKey)} aria-label={regionExpanded ? "收起地域" : "展开地域"}>
                                               <span className="tree-caret" />
                                             </button>
                                             <button
-                                              className={scope === buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`) ? "tree-node region active" : "tree-node region"}
-                                              onClick={() => selectScope(buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`))}
+                                              className={scope === buildScopeKey("productAccountRegion", `${resourceType}:${provider}:${account.id}:${region}`) ? "tree-node region active" : "tree-node region"}
+                                              onClick={() => selectScope(buildScopeKey("productAccountRegion", `${resourceType}:${provider}:${account.id}:${region}`))}
                                             >
                                               <span className="tree-label">{region}</span>
                                               <em>{regionServers.length}</em>
@@ -2482,7 +2702,7 @@ export function CloudResourceConsole() {
                                                   className={selectedServer.id === server.id ? "tree-node server active" : "tree-node server"}
                                                   key={server.id}
                                                   onClick={() => {
-                                                    selectScope(buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`));
+                                                    selectScope(buildScopeKey("productAccountRegion", `${resourceType}:${provider}:${account.id}:${region}`));
                                                     setSelectedServerId(server.id);
                                                   }}
                                                 >
@@ -2500,8 +2720,7 @@ export function CloudResourceConsole() {
                         : null}
                     </div>
                   );
-                })}
-                </>
+                })
               )
               : null}
           </div>
@@ -2522,6 +2741,11 @@ export function CloudResourceConsole() {
       <section className="page-main-section">
         <div className="toolbar">
           <input value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="搜索资源、账号、IP、业务或地域" />
+          <select value={resourceFilter} onChange={(event) => setResourceFilter(event.currentTarget.value as ResourceType | "all")}>
+            <option value="all">全部产品</option>
+            <option value="ecs">只看 ECS</option>
+            <option value="rds">只看 RDS</option>
+          </select>
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as ServerStatus | "all")}>
             <option value="all">全部状态</option>
             <option value="running">运行中</option>
@@ -2547,7 +2771,7 @@ export function CloudResourceConsole() {
           <span>异常资源：{summary.warningServers}</span>
           <span>监控异常：{summary.agentIssues}</span>
           <span>到期关注：{expirationSummary.expiring}（30 天内）</span>
-          <span>云资源同步：{assetLoading ? "同步中" : assetError ? `异常：${assetError}` : `${lastSyncAt}，自动刷新 30 秒`}</span>
+          <span>云资源同步：{assetLoading ? "同步中" : assetError ? `异常：${assetError}` : `${lastSyncAt}，${refreshSummary}`}</span>
         </div>
 
         <div className="table-panel">{renderServerTable(visibleServers)}</div>
@@ -2634,7 +2858,7 @@ export function CloudResourceConsole() {
                 return (
                   <tr key={account.id}>
                     <td>{providerLabels[account.provider]}</td>
-                    <td><strong>{account.name}</strong><span>{account.checkMessage || account.alias}</span></td>
+                    <td><strong>{account.name}</strong></td>
                     <td>{account.uid}</td>
                     <td>{account.owner}</td>
                     <td>{account.scope}</td>
@@ -2772,125 +2996,185 @@ export function CloudResourceConsole() {
     const metricRows = isRDS ? buildRDSMonitorRows(overview) : buildMonitorRows(overview);
     const freshness = resolveOverviewFreshness(overview);
     const snapshot = latestMetricSnapshot(overview);
+    const account = getAccount(selectedServer.accountId);
+    const expiration = resolveExpirationInfo(selectedServer);
+    const chartRows = metricRows.filter((item) => item.status !== "empty" || item.points > 0);
+    const okMetricCount = metricRows.filter((item) => item.status === "ok").length;
+    const errorMetricCount = metricRows.filter((item) => item.status === "error").length;
+    const emptyMetricCount = Math.max(0, metricRows.length - okMetricCount - errorMetricCount);
+    const sampleSources = [
+      ...new Set(
+        Object.values(overview?.metrics ?? {})
+          .filter((series) => hasMetricPoint(series))
+          .map((series) => metricSourceLabel(series))
+          .filter(Boolean)
+      ),
+    ];
     const freshnessSummary = snapshot.latestTimestamp
-      ? `监控窗口最近拿到 ${snapshot.pointCount} 个采样点，${freshness.message}${snapshot.periodSeconds ? `，主采样周期 ${snapshot.periodSeconds}s` : ""}`
+      ? `最近 30 分钟 ${snapshot.pointCount} 个采样点，${freshness.message}${snapshot.periodSeconds ? `，周期 ${snapshot.periodSeconds}s` : ""}`
       : freshness.message;
     return (
       <section className="page-main-section">
+        <div className="monitor-topline">
+          <div className="monitor-stat-strip">
+            <span><b>监控正常</b>{monitorSummary.online}</span>
+            <span><b>数据偏旧</b>{monitorSummary.stale}</span>
+            <span><b>未同步</b>{monitorSummary.missing}</span>
+            <span><b>离线</b>{monitorSummary.offline}</span>
+          </div>
+          <div className="monitor-refresh-panel">
+            <span>{refreshSummary}</span>
+            <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>
+              {assetLoading ? "刷新中" : "立即刷新"}
+            </button>
+          </div>
+        </div>
         <div className="table-panel">{renderServerTable(monitorServers)}</div>
-        <section className="detail-panel">
-          <div className="section-title">
-            <h3>{isRDS ? "RDS 性能详情" : "ECS 监控详情"}</h3>
-            <span>{selectedServer.name} / {selectedServer.instanceId}</span>
+        <section className="detail-panel monitor-overview-panel">
+          <div className="section-title monitor-overview-title">
+            <div>
+              <h3>{isRDS ? "RDS 性能监控" : "ECS 云监控"}</h3>
+              <span>{selectedServer.name} / {selectedServer.instanceId}</span>
+            </div>
+            <StatusText status={selectedServer.agentStatus}>{agentStatusLabels[selectedServer.agentStatus]}</StatusText>
           </div>
           {freshnessSummary ? (
             <div className="inline-message">{freshnessSummary}</div>
           ) : null}
-          <div className="monitor-detail-table-wrap">
-            <table className="data-table monitor-detail-table">
-              <colgroup>
-                <col className="monitor-metric-col" />
-                <col className="monitor-current-col" />
-                <col className="monitor-trend-col" />
-                <col className="monitor-samples-col" />
-                <col className="monitor-stats-col" />
-                <col className="monitor-meta-col" />
-                <col className="monitor-status-col" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>指标</th>
-                  <th>当前值</th>
-                  <th>趋势</th>
-                  <th>最近采样</th>
-                  <th>30 分钟统计</th>
-                  <th>采样</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metricRows.map((item) => (
-                  <Fragment key={item.key}>
-                    <tr className="monitor-metric-row">
-                      <td className="metric-name-cell">
-                        <strong>{item.label}</strong>
-                        <span>{item.unit || "无单位"}</span>
-                      </td>
-                      <td className="metric-current-cell">{item.value}</td>
-                      <td className="metric-trend-cell">
-                        <MetricSparkline points={item.sparklinePoints} status={item.status} />
-                        <span>{item.trend}</span>
-                      </td>
-                      <td className="metric-samples-cell">
-                        {item.recentSamples.length ? (
-                          item.recentSamples.map((sample) => (
-                            <span className="metric-sample-chip" key={`${item.key}-${sample}`}>{sample}</span>
-                          ))
-                        ) : (
-                          <span className="metric-sample-empty">--</span>
-                        )}
-                      </td>
-                      <td className="metric-range-cell">
-                        <strong>{item.range}</strong>
-                        <span>均值 {item.average}</span>
-                      </td>
-                      <td className="metric-sample-meta-cell">
-                        <strong>{item.sampledAt}</strong>
-                        <span>{item.points} 个点</span>
-                      </td>
-                      <td>
-                        <StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>
-                          {item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}
-                        </StatusText>
-                      </td>
-                    </tr>
-                    <tr className={`monitor-note-row monitor-note-${item.status}`}>
-                      <td colSpan={7}>
-                        <div className="monitor-note" title={item.note}>
-                          <span>说明</span>
-                          <p>{item.note}</p>
-                        </div>
-                      </td>
-                    </tr>
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
+          <div className="monitor-resource-summary">
+            <span><b>云平台 / 账号</b>{providerLabels[selectedServer.provider]} / {account?.name ?? "--"}</span>
+            <span><b>地域 / 可用区</b>{selectedServer.region} / {selectedServer.zone}</span>
+            <span><b>{isRDS ? "引擎 / 规格" : "系统 / 规格"}</b>{selectedServer.os} / {selectedServer.spec}</span>
+            <span><b>{publicIpLabel(selectedServer)}</b>{selectedServer.publicIp}</span>
+            <span><b>到期状态</b>{expiration.text}</span>
+          </div>
+          <div className="monitor-data-summary">
+            <span><b>指标分组</b>{isRDS ? "RDS 性能参数" : "ECS 主机、网络、磁盘吞吐"}</span>
+            <span><b>可用图表</b>{okMetricCount} 项</span>
+            <span><b>异常 / 空数据</b>{errorMetricCount} / {emptyMetricCount}</span>
+            <span><b>数据来源</b>{sampleSources.length ? sampleSources.join("、") : "等待云厂商返回采样"}</span>
+          </div>
+          <div className="monitor-chart-grid">
+            {chartRows.map((item) => <MetricChartCard item={item} key={item.key} />)}
+            {!chartRows.length ? (
+              <div className="monitor-chart-empty">
+                <strong>暂无可展示的监控图表</strong>
+                <span>{freshness.message || "云厂商暂未返回该资源的采样点"}</span>
+              </div>
+            ) : null}
           </div>
         </section>
       </section>
     );
   };
 
-  const renderAgentsPage = () => (
-    <section className="page-main-section">
-      <div className="table-panel">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>资源</th>
-              <th>云账号</th>
-              <th>监控状态</th>
-              <th>最近采样</th>
-            </tr>
-          </thead>
-          <tbody>
-            {servers.map((server) => {
-              const account = getAccount(server.accountId);
-              return (
-                <tr key={server.id}>
-                  <td><strong>{server.name}</strong><span>{resourceTypeLabels[getResourceType(server)]} / {server.privateIp}</span></td>
-                  <td>{account?.alias ?? "--"}</td>
-                  <td><StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText></td>
-                  <td>{server.lastSeen}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
+  const renderAgentsPage = () => {
+    const selectedOverview = overviewByServerId[selectedServer.id];
+    const selectedSnapshot = latestMetricSnapshot(selectedOverview);
+    const selectedFreshness = resolveOverviewFreshness(selectedOverview);
+    const selectedAccountForAgent = getAccount(selectedServer.accountId);
+    const selectedSources = [
+      ...new Set(
+        Object.values(selectedOverview?.metrics ?? {})
+          .filter((series) => hasMetricPoint(series))
+          .map((series) => metricSourceLabel(series))
+          .filter(Boolean)
+      ),
+    ];
+    return (
+      <section className="page-main-section">
+        <div className="monitor-topline">
+          <div className="monitor-stat-strip">
+            <span><b>正常</b>{monitorSummary.online}</span>
+            <span><b>数据异常</b>{monitorSummary.stale}</span>
+            <span><b>未同步</b>{monitorSummary.missing}</span>
+            <span><b>离线</b>{monitorSummary.offline}</span>
+          </div>
+          <div className="monitor-refresh-panel">
+            <span>{refreshSummary}</span>
+            <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>
+              {assetLoading ? "刷新中" : "立即刷新"}
+            </button>
+          </div>
+        </div>
+        <div className="agents-layout">
+          <div className="agent-groups">
+            {agentGroups.map((group) => (
+              <section className="agent-group" key={group.status}>
+                <div className="agent-group-title">
+                  <div>
+                    <h3>{group.label}</h3>
+                    <span>{group.description}</span>
+                  </div>
+                  <StatusText status={group.status}>{String(group.rows.length)}</StatusText>
+                </div>
+                <div className="table-panel agent-table-panel">
+                  <table className="data-table agent-table">
+                    <thead>
+                      <tr>
+                        <th>资源</th>
+                        <th>账号 / 地域</th>
+                        <th>资源类型</th>
+                        <th>最近采样</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.rows.map((server) => {
+                        const account = getAccount(server.accountId);
+                        return (
+                          <tr
+                            className={selectedServer.id === server.id ? "selected" : ""}
+                            key={server.id}
+                            onClick={() => setSelectedServerId(server.id)}
+                          >
+                            <td><strong>{server.name}</strong><span>{server.instanceId}</span></td>
+                            <td>{account?.alias ?? "--"}<span>{server.region} / {server.zone}</span></td>
+                            <td>{resourceTypeLabels[getResourceType(server)]}</td>
+                            <td>{server.lastSeen}</td>
+                          </tr>
+                        );
+                      })}
+                      {!group.rows.length ? (
+                        <tr>
+                          <td className="empty-cell" colSpan={4}>当前没有该状态的资源</td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
+          </div>
+          <section className="detail-panel agent-detail-panel">
+            <div className="section-title monitor-overview-title">
+              <div>
+                <h3>探针详情</h3>
+                <span>{selectedServer.name} / {selectedServer.instanceId}</span>
+              </div>
+              <StatusText status={selectedServer.agentStatus}>{agentStatusLabels[selectedServer.agentStatus]}</StatusText>
+            </div>
+            <div className="monitor-resource-summary agent-resource-summary">
+              <span><b>云平台 / 账号</b>{providerLabels[selectedServer.provider]} / {selectedAccountForAgent?.name ?? "--"}</span>
+              <span><b>地域 / 可用区</b>{selectedServer.region} / {selectedServer.zone}</span>
+              <span><b>资源类型</b>{resourceTypeLabels[getResourceType(selectedServer)]}</span>
+              <span><b>监控状态</b>{selectedServer.lastSeen}</span>
+            </div>
+            <div className="agent-detail-groups">
+              <table className="detail-table">
+                <tbody>
+                  <tr><th>采样来源</th><td>{selectedSources.length ? selectedSources.join("、") : "暂无可用采样来源"}</td></tr>
+                  <tr><th>最近采样</th><td>{selectedSnapshot.latestTimestamp ? formatMetricTime(selectedSnapshot.latestTimestamp) : "--"}</td></tr>
+                  <tr><th>采样周期</th><td>{selectedSnapshot.periodSeconds ? `${selectedSnapshot.periodSeconds}s` : "--"}</td></tr>
+                  <tr><th>采样点数</th><td>{selectedSnapshot.pointCount}</td></tr>
+                  <tr><th>状态说明</th><td>{selectedFreshness.message}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    );
+  };
 
   const renderEventsPage = () => (
     <section className="page-main-section">
@@ -3075,7 +3359,7 @@ export function CloudResourceConsole() {
         <header className="admin-header">
           <div>
             <h1>{getPageTitle(activePage)}</h1>
-            <p>当前先收口阿里云 ECS 与 RDS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
+            <p>当前先收口阿里云 ECS/RDS 与华为云 ECS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
           </div>
           <div className="header-meta">
             <span>{USE_MOCK ? "当前为前端样例数据" : "当前为真实云账号数据"}</span>

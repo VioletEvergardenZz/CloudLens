@@ -144,8 +144,8 @@ func (c *Client) MetricWithDimensions(namespace, metricName string, dimensions m
 	if instanceID == "" {
 		return nil, fmt.Errorf("instanceId 不能为空")
 	}
-	dim0 := firstDimension(dimensions)
-	if dim0 == "" {
+	dimensionValues := metricDimensions(dimensions)
+	if len(dimensionValues) == 0 {
 		return nil, fmt.Errorf("华为云监控维度不能为空")
 	}
 	client, err := c.newCESClient(region)
@@ -158,11 +158,20 @@ func (c *Client) MetricWithDimensions(namespace, metricName string, dimensions m
 	req := &cesmodel.ShowMetricDataRequest{
 		Namespace:  namespace,
 		MetricName: metricName,
-		Dim0:       dim0,
+		Dim0:       dimensionValues[0],
 		Filter:     cesmodel.GetShowMetricDataRequestFilterEnum().AVERAGE,
 		Period:     periodEnum,
 		From:       start.UnixMilli(),
 		To:         end.UnixMilli(),
+	}
+	if len(dimensionValues) > 1 {
+		req.Dim1 = stringPtr(dimensionValues[1])
+	}
+	if len(dimensionValues) > 2 {
+		req.Dim2 = stringPtr(dimensionValues[2])
+	}
+	if len(dimensionValues) > 3 {
+		req.Dim3 = stringPtr(dimensionValues[3])
 	}
 	resp, err := client.ShowMetricData(req)
 	if err != nil {
@@ -182,9 +191,75 @@ func (c *Client) MetricWithDimensions(namespace, metricName string, dimensions m
 		RegionID:   region,
 		Namespace:  namespace,
 		MetricName: firstNonEmpty(stringPtrValue(resp.MetricName), metricName),
+		Unit:       resolveMetricSeriesUnit(points, huaweiMetricUnit(namespace, metricName)),
 		Period:     strconv.Itoa(int(periodEnum.Value())),
 		Points:     points,
 	}, nil
+}
+
+func (c *Client) MetricDimensions(namespace, metricName string, dimensions map[string]string, region string) ([]map[string]string, error) {
+	if c == nil {
+		return nil, fmt.Errorf("华为云客户端未初始化")
+	}
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = c.config.Region
+	}
+	if region == "" {
+		return nil, fmt.Errorf("查询华为云监控指标维度必须指定 region")
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		namespace = NamespaceECS
+	}
+	metricName = strings.TrimSpace(metricName)
+	if metricName == "" {
+		return nil, fmt.Errorf("metricName 不能为空")
+	}
+	metricDims := metricDimensions(dimensions)
+	client, err := c.newCESClient(region)
+	if err != nil {
+		return nil, err
+	}
+	req := &cesmodel.ListMetricsRequest{
+		Namespace:  stringPtr(namespace),
+		MetricName: stringPtr(metricName),
+		Limit:      int32Ptr(1000),
+	}
+	if len(metricDims) > 0 {
+		req.Dim0 = stringPtr(metricDims[0])
+	}
+	if len(metricDims) > 1 {
+		req.Dim1 = stringPtr(metricDims[1])
+	}
+	if len(metricDims) > 2 {
+		req.Dim2 = stringPtr(metricDims[2])
+	}
+	resp, err := client.ListMetrics(req)
+	if err != nil {
+		return nil, fmt.Errorf("查询华为云 CES 指标维度失败 region=%s metric=%s: %w", region, metricName, err)
+	}
+	out := make([]map[string]string, 0)
+	if resp.Metrics == nil {
+		return out, nil
+	}
+	for _, metric := range *resp.Metrics {
+		if metric.Namespace != namespace || metric.MetricName != metricName {
+			continue
+		}
+		item := make(map[string]string)
+		for _, dim := range metric.Dimensions {
+			name := strings.TrimSpace(dim.Name)
+			value := strings.TrimSpace(dim.Value)
+			if name != "" && value != "" {
+				item[name] = value
+			}
+		}
+		if len(item) > 0 {
+			out = append(out, item)
+		}
+	}
+	return out, nil
 }
 
 func (c *Client) newECSClient(regionID string) (*ecs.EcsClient, error) {
@@ -407,28 +482,74 @@ func mapMetricPoint(item cesmodel.Datapoint) MetricPoint {
 	}
 }
 
-func firstDimension(dimensions map[string]string) string {
-	for _, key := range []string{"instance_id", "instanceId", "server_id"} {
-		value := strings.TrimSpace(dimensions[key])
-		if value != "" {
-			if key == "instanceId" {
-				key = "instance_id"
-			}
-			return key + "," + value
+func resolveMetricSeriesUnit(points []MetricPoint, fallback string) string {
+	for _, point := range points {
+		raw, ok := point.Raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		unit, ok := raw["unit"].(string)
+		if ok && strings.TrimSpace(unit) != "" {
+			return strings.TrimSpace(unit)
 		}
 	}
+	return strings.TrimSpace(fallback)
+}
+
+func huaweiMetricUnit(namespace, metricName string) string {
+	namespace = strings.TrimSpace(namespace)
+	metricName = strings.TrimSpace(metricName)
+	switch metricName {
+	case "cpu_util", "mem_util", "mem_usedPercent", "disk_util_inband", "disk_usedPercent", "disk_util":
+		return "%"
+	case "network_incoming_bytes_aggregate_rate", "network_outgoing_bytes_aggregate_rate",
+		"network_incoming_bytes_rate_inband", "network_outgoing_bytes_rate_inband",
+		"disk_read_bytes_rate", "disk_write_bytes_rate":
+		return "Byte/s"
+	default:
+		if namespace == NamespaceAGT && strings.HasPrefix(metricName, "load_average") {
+			return ""
+		}
+		return ""
+	}
+}
+
+func metricDimensions(dimensions map[string]string) []string {
 	keys := make([]string, 0, len(dimensions))
 	for key := range dimensions {
 		if strings.TrimSpace(key) != "" && strings.TrimSpace(dimensions[key]) != "" {
-			keys = append(keys, key)
+			keys = append(keys, normalizeDimensionKey(key))
 		}
 	}
 	sort.Strings(keys)
 	if len(keys) == 0 {
-		return ""
+		return nil
 	}
-	key := keys[0]
-	return strings.TrimSpace(key) + "," + strings.TrimSpace(dimensions[key])
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := ""
+		for rawKey, rawValue := range dimensions {
+			if normalizeDimensionKey(rawKey) == key {
+				value = strings.TrimSpace(rawValue)
+				break
+			}
+		}
+		if value != "" {
+			out = append(out, key+","+value)
+		}
+		if len(out) >= 4 {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeDimensionKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "instanceId" || key == "server_id" {
+		return "instance_id"
+	}
+	return key
 }
 
 func huaweiPeriodEnum(periodSeconds int) cesmodel.ShowMetricDataRequestPeriod {
@@ -536,6 +657,10 @@ func parsePositiveInt(raw string, fallback int) int {
 }
 
 func int32Ptr(value int32) *int32 {
+	return &value
+}
+
+func stringPtr(value string) *string {
 	return &value
 }
 
