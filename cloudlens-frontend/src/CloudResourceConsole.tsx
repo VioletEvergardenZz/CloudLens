@@ -26,7 +26,7 @@ type Provider = "aliyun" | "huawei" | "tencent";
 type AccountStatus = "normal" | "warning" | "syncing" | "disabled";
 type ServerStatus = "running" | "warning" | "offline" | "maintenance";
 type AgentStatus = "online" | "stale" | "missing" | "offline";
-type ScopeKind = "all" | "provider" | "account" | "accountRegion" | "region";
+type ScopeKind = "all" | "product" | "provider" | "providerProduct" | "account" | "accountProduct" | "accountProductRegion" | "accountRegion" | "region";
 type ThemeMode = "light" | "dark";
 type PublicIpType = "public" | "eip" | "none";
 type ResourceType = "ecs" | "rds";
@@ -360,6 +360,8 @@ const resourceTypeLabels: Record<ResourceType, string> = {
   ecs: "ECS",
   rds: "RDS",
 };
+
+const resourceTypes: ResourceType[] = ["ecs", "rds"];
 
 const getResourceType = (server: CloudServer): ResourceType => server.resourceType ?? "ecs";
 
@@ -1717,15 +1719,29 @@ const buildScopeKey = (kind: ScopeKind, value = "") => `${kind}:${value}`;
 
 const parseScope = (scope: string): { kind: ScopeKind; value: string } => {
   const [kind, ...rest] = scope.split(":");
-  if (kind === "provider" || kind === "account" || kind === "accountRegion" || kind === "region") {
+  if (
+    kind === "product" ||
+    kind === "provider" ||
+    kind === "providerProduct" ||
+    kind === "account" ||
+    kind === "accountProduct" ||
+    kind === "accountProductRegion" ||
+    kind === "accountRegion" ||
+    kind === "region"
+  ) {
     return { kind, value: rest.join(":") };
   }
   return { kind: "all", value: "" };
 };
 
 const serverMatchesScope = (server: CloudServer, parsedScope: { kind: ScopeKind; value: string }) => {
+  const resourceType = getResourceType(server);
+  if (parsedScope.kind === "product") return resourceType === parsedScope.value;
   if (parsedScope.kind === "provider") return server.provider === parsedScope.value;
+  if (parsedScope.kind === "providerProduct") return `${server.provider}:${resourceType}` === parsedScope.value;
   if (parsedScope.kind === "account") return server.accountId === parsedScope.value;
+  if (parsedScope.kind === "accountProduct") return `${server.accountId}:${resourceType}` === parsedScope.value;
+  if (parsedScope.kind === "accountProductRegion") return `${server.accountId}:${resourceType}:${server.region}` === parsedScope.value;
   if (parsedScope.kind === "accountRegion") return `${server.accountId}:${server.region}` === parsedScope.value;
   if (parsedScope.kind === "region") return `${server.provider}:${server.region}` === parsedScope.value;
   return true;
@@ -2349,6 +2365,21 @@ export function CloudResourceConsole() {
         <span className="tree-label">全部云平台</span>
         <em>{servers.length}</em>
       </button>
+      <div className="tree-group product-overview">
+        {resourceTypes.map((resourceType) => {
+          const productServers = servers.filter((server) => getResourceType(server) === resourceType);
+          return (
+            <button
+              className={scope === buildScopeKey("product", resourceType) ? "tree-node product active" : "tree-node product"}
+              key={resourceType}
+              onClick={() => selectScope(buildScopeKey("product", resourceType))}
+            >
+              <span className="tree-label">全部 {resourceTypeLabels[resourceType]}</span>
+              <em>{productServers.length}</em>
+            </button>
+          );
+        })}
+      </div>
       {(["aliyun", "huawei", "tencent"] as Provider[]).map((provider) => {
         const providerKey = `provider:${provider}`;
         const providerExpanded = isTreeExpanded(providerKey);
@@ -2370,11 +2401,27 @@ export function CloudResourceConsole() {
               </button>
             </div>
             {providerExpanded
-              ? providerAccounts.map((account) => {
+              ? (
+                <>
+                  {resourceTypes.map((resourceType) => {
+                    const providerProductKey = `providerProduct:${provider}:${resourceType}`;
+                    const productServers = providerServers.filter((server) => getResourceType(server) === resourceType);
+                    if (!productServers.length) return null;
+                    return (
+                      <button
+                        className={scope === buildScopeKey("providerProduct", `${provider}:${resourceType}`) ? "tree-node product active" : "tree-node product"}
+                        key={providerProductKey}
+                        onClick={() => selectScope(buildScopeKey("providerProduct", `${provider}:${resourceType}`))}
+                      >
+                        <span className="tree-label">{resourceTypeLabels[resourceType]}</span>
+                        <em>{productServers.length}</em>
+                      </button>
+                    );
+                  })}
+                  {providerAccounts.map((account) => {
                   const accountKey = `account:${account.id}`;
                   const accountExpanded = isTreeExpanded(accountKey);
                   const accountServers = servers.filter((server) => server.accountId === account.id);
-                  const accountRegions = [...new Set(accountServers.map((server) => server.region))];
                   return (
                     <div className="account-branch" key={account.id}>
                       <div className="tree-line">
@@ -2390,37 +2437,62 @@ export function CloudResourceConsole() {
                         </button>
                       </div>
                       {accountExpanded
-                        ? accountRegions.map((region) => {
-                            const regionKey = `accountRegion:${account.id}:${region}`;
-                            const regionExpanded = isTreeExpanded(regionKey);
-                            const regionServers = accountServers.filter((server) => server.region === region);
+                        ? resourceTypes.map((resourceType) => {
+                            const productKey = `accountProduct:${account.id}:${resourceType}`;
+                            const productExpanded = isTreeExpanded(productKey);
+                            const productServers = accountServers.filter((server) => getResourceType(server) === resourceType);
+                            const productRegions = [...new Set(productServers.map((server) => server.region))];
+                            if (!productServers.length) return null;
                             return (
-                              <div className="region-branch" key={`${account.id}:${region}`}>
+                              <div className="product-branch" key={`${account.id}:${resourceType}`}>
                                 <div className="tree-line">
-                                  <button className={regionExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(regionKey)} aria-label={regionExpanded ? "收起地域" : "展开地域"}>
+                                  <button className={productExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(productKey)} aria-label={productExpanded ? "收起产品" : "展开产品"}>
                                     <span className="tree-caret" />
                                   </button>
                                   <button
-                                    className={scope === buildScopeKey("accountRegion", `${account.id}:${region}`) ? "tree-node region active" : "tree-node region"}
-                                    onClick={() => selectScope(buildScopeKey("accountRegion", `${account.id}:${region}`))}
+                                    className={scope === buildScopeKey("accountProduct", `${account.id}:${resourceType}`) ? "tree-node product active" : "tree-node product"}
+                                    onClick={() => selectScope(buildScopeKey("accountProduct", `${account.id}:${resourceType}`))}
                                   >
-                                    <span className="tree-label">{region}</span>
-                                    <em>{regionServers.length}</em>
+                                    <span className="tree-label">{resourceTypeLabels[resourceType]}</span>
+                                    <em>{productServers.length}</em>
                                   </button>
                                 </div>
-                                {regionExpanded
-                                  ? regionServers.map((server) => (
-                                      <button
-                                        className={selectedServer.id === server.id ? "tree-node server active" : "tree-node server"}
-                                        key={server.id}
-                                        onClick={() => {
-                                          selectScope(buildScopeKey("accountRegion", `${account.id}:${region}`));
-                                          setSelectedServerId(server.id);
-                                        }}
-                                      >
-                                        <span className="tree-label">{server.name}</span>
-                                      </button>
-                                    ))
+                                {productExpanded
+                                  ? productRegions.map((region) => {
+                                      const regionKey = `accountProductRegion:${account.id}:${resourceType}:${region}`;
+                                      const regionExpanded = isTreeExpanded(regionKey);
+                                      const regionServers = productServers.filter((server) => server.region === region);
+                                      return (
+                                        <div className="region-branch" key={`${account.id}:${resourceType}:${region}`}>
+                                          <div className="tree-line">
+                                            <button className={regionExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(regionKey)} aria-label={regionExpanded ? "收起地域" : "展开地域"}>
+                                              <span className="tree-caret" />
+                                            </button>
+                                            <button
+                                              className={scope === buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`) ? "tree-node region active" : "tree-node region"}
+                                              onClick={() => selectScope(buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`))}
+                                            >
+                                              <span className="tree-label">{region}</span>
+                                              <em>{regionServers.length}</em>
+                                            </button>
+                                          </div>
+                                          {regionExpanded
+                                            ? regionServers.map((server) => (
+                                                <button
+                                                  className={selectedServer.id === server.id ? "tree-node server active" : "tree-node server"}
+                                                  key={server.id}
+                                                  onClick={() => {
+                                                    selectScope(buildScopeKey("accountProductRegion", `${account.id}:${resourceType}:${region}`));
+                                                    setSelectedServerId(server.id);
+                                                  }}
+                                                >
+                                                  <span className="tree-label">{server.name}</span>
+                                                </button>
+                                              ))
+                                            : null}
+                                        </div>
+                                      );
+                                    })
                                   : null}
                               </div>
                             );
@@ -2428,7 +2500,9 @@ export function CloudResourceConsole() {
                         : null}
                     </div>
                   );
-                })
+                })}
+                </>
+              )
               : null}
           </div>
         );
