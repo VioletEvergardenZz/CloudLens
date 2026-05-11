@@ -201,6 +201,18 @@ type AliyunRDSEndpoint = {
   vSwitchId?: string;
 };
 
+type AliyunRDSResourceUsage = {
+  dbInstanceId?: string;
+  engine?: string;
+  diskUsedBytes?: number;
+  dataSizeBytes?: number;
+  logSizeBytes?: number;
+  sqlSizeBytes?: number;
+  backupSizeBytes?: number;
+  storageUsagePercent?: number;
+  source?: string;
+};
+
 type AliyunRDSInstance = {
   id: string;
   name: string;
@@ -235,6 +247,7 @@ type AliyunRDSInstance = {
   expiredAt: string;
   payType: string;
   endpoints?: AliyunRDSEndpoint[];
+  resourceUsage?: AliyunRDSResourceUsage;
   detailErrors?: string[];
   expiresInDays?: number;
   expirationStatus?: ExpirationStatus;
@@ -258,7 +271,7 @@ type RDSStorageUsage = {
   unit?: string;
   rawValue?: number;
   storageGb?: number;
-  source: "percent" | "size" | "missing";
+  source: "official" | "percent" | "size" | "missing";
 };
 
 type ApiCloudAccount = {
@@ -330,11 +343,28 @@ type MonitorMetric = {
 
 type RefreshState = "idle" | "syncing" | "ok" | "error";
 
-type AgentGroup = {
-  status: AgentStatus;
-  label: string;
-  description: string;
+type ResourceAccountNode = {
+  key: string;
+  resourceType: ResourceType;
+  provider: Provider;
+  accountId: string;
+  accountName: string;
   rows: CloudServer[];
+};
+
+type ResourceProviderNode = {
+  key: string;
+  resourceType: ResourceType;
+  provider: Provider;
+  rows: CloudServer[];
+  accounts: ResourceAccountNode[];
+};
+
+type ResourceProductNode = {
+  key: string;
+  resourceType: ResourceType;
+  rows: CloudServer[];
+  providers: ResourceProviderNode[];
 };
 
 const providerLabels: Record<Provider, string> = {
@@ -1110,6 +1140,54 @@ const sortServersByMetric = (
   });
 };
 
+const buildResourceProductTree = (
+  rows: CloudServer[],
+  accounts: CloudAccount[],
+  metricSort: { key: ServerSortKey; direction: SortDirection } | null
+): ResourceProductNode[] => {
+  const accountMap = new Map(accounts.map((account) => [account.id, account]));
+  const typeOrder: Record<ResourceType, number> = { ecs: 0, rds: 1 };
+  return resourceTypes
+    .map((resourceType) => {
+      const productRows = rows.filter((server) => getResourceType(server) === resourceType);
+      const providers = (["aliyun", "huawei", "tencent"] as Provider[])
+        .map((provider) => {
+          const providerRows = productRows.filter((server) => server.provider === provider);
+          const accountIDs = [...new Set(providerRows.map((server) => server.accountId))];
+          const accountNodes = accountIDs
+            .map((accountId) => {
+              const account = accountMap.get(accountId);
+              const accountRows = providerRows.filter((server) => server.accountId === accountId);
+              return {
+                key: `${resourceType}:${provider}:${accountId}`,
+                resourceType,
+                provider,
+                accountId,
+                accountName: account?.name ?? account?.alias ?? "未匹配账号",
+                rows: sortServersByMetric(accountRows, metricSort),
+              };
+            })
+            .sort((left, right) => left.accountName.localeCompare(right.accountName, "zh-CN"));
+          return {
+            key: `${resourceType}:${provider}`,
+            resourceType,
+            provider,
+            rows: providerRows,
+            accounts: accountNodes,
+          };
+        })
+        .filter((provider) => provider.rows.length > 0);
+      return {
+        key: resourceType,
+        resourceType,
+        rows: productRows,
+        providers,
+      };
+    })
+    .filter((product) => product.rows.length > 0)
+    .sort((left, right) => typeOrder[left.resourceType] - typeOrder[right.resourceType]);
+};
+
 const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
   const provider = supportedAccountProviders.includes(account.provider) ? account.provider : "aliyun";
   const status = !account.enabled
@@ -1271,6 +1349,17 @@ const rdsStorageValueToMb = (series: AliyunMetricSeries, value: number) => {
 };
 
 const resolveRDSStorageUsage = (overview: AliyunOverviewResponse | undefined, instance: AliyunRDSInstance): RDSStorageUsage => {
+  if (typeof instance.resourceUsage?.storageUsagePercent === "number") {
+    return {
+      percent: clampPercentMetric(instance.resourceUsage.storageUsagePercent),
+      metricName: instance.resourceUsage.source || "rds.DescribeResourceUsage",
+      subKey: "DiskUsed",
+      unit: "%",
+      rawValue: instance.resourceUsage.diskUsedBytes,
+      storageGb: instance.storageGb,
+      source: "official",
+    };
+  }
   const direct = latestRDSMetricValue(overview, ["diskusage", "storageusage", "spaceusage_percent"], ["iops", "mbps"]);
   if (direct && isPercentSeries(direct.series)) {
     return {
@@ -2121,21 +2210,6 @@ export function CloudResourceConsole() {
                   const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
                   const server = mapAliyunRDSResource(account, instance, overviewResp.ok ? overview : undefined);
                   if (overviewResp.ok) {
-                    const storageUsage = resolveRDSStorageUsage(overview, instance);
-                    console.info("[CloudLens] RDS 磁盘换算", {
-                      account: account.name,
-                      instanceId: instance.id,
-                      instanceName: instance.name,
-                      metricName: storageUsage.metricName,
-                      subKey: storageUsage.subKey,
-                      unit: storageUsage.unit,
-                      rawValue: storageUsage.rawValue,
-                      storageGb: storageUsage.storageGb,
-                      percent: storageUsage.percent,
-                      source: storageUsage.source,
-                    });
-                  }
-                  if (overviewResp.ok) {
                     overviewMap[server.id] = overview;
                   } else {
                     overviewMap[server.id] = { ok: false, resource: "rds", error: overview.error || "RDS 性能数据读取失败" };
@@ -2428,7 +2502,10 @@ export function CloudResourceConsole() {
     return sortServersByMetric(rows, metricSort);
   }, [agentFilter, getAccount, keyword, metricSort, parsedScope, resourceFilter, servers, statusFilter]);
 
-  const monitorServers = useMemo(() => sortServersByMetric(servers, metricSort), [metricSort, servers]);
+  const monitorResourceTree = useMemo(
+    () => buildResourceProductTree(servers, accounts, metricSort),
+    [accounts, metricSort, servers]
+  );
 
   const selectedServer = useMemo(() => {
     if (activePage === "monitor" || activePage === "agents") return servers.find((server) => server.id === selectedServerId) ?? servers[0] ?? emptyCloudServer;
@@ -2470,22 +2547,7 @@ export function CloudResourceConsole() {
     return { online, stale, missing, offline };
   }, [servers]);
 
-  const agentGroups = useMemo<AgentGroup[]>(() => {
-    const descriptions: Record<AgentStatus, string> = {
-      online: "云厂商返回的采样时间在可接受窗口内",
-      stale: "接口可用但采样偏旧，或本轮暂未返回新采样",
-      missing: "暂未拿到云监控采样点，需要检查权限、地域或 Agent/插件状态",
-      offline: "资源已离线，监控采样不可用",
-    };
-    return (["online", "stale", "missing", "offline"] as AgentStatus[])
-      .map((status) => ({
-        status,
-        label: agentStatusLabels[status],
-        description: descriptions[status],
-        rows: servers.filter((server) => server.agentStatus === status),
-      }))
-      .filter((group) => group.rows.length > 0 || group.status !== "offline");
-  }, [servers]);
+  const agentResourceTree = monitorResourceTree;
 
   const regionRows = useMemo(() => {
     const map = new Map<string, { provider: Provider; region: string; total: number; abnormal: number; agents: number }>();
@@ -2604,6 +2666,126 @@ export function CloudResourceConsole() {
         ) : null}
       </tbody>
     </table>
+  );
+
+  const renderResourcePicker = (products: ResourceProductNode[], emptyText: string) => (
+    <div className="resource-picker">
+      {products.map((product) => {
+        const productKey = `monitorPicker:product:${product.key}`;
+        const productHasSelected = product.rows.some((server) => server.id === selectedServer.id);
+        const productExpanded = typeof expandedTree[productKey] === "boolean" ? expandedTree[productKey] : productHasSelected;
+        return (
+          <section className="resource-picker-group" key={product.key}>
+            <button
+              className={productExpanded ? "resource-picker-node product expanded" : "resource-picker-node product"}
+              type="button"
+              onClick={() => {
+                setExpandedTree((current) => {
+                  const currentExpanded = typeof current[productKey] === "boolean" ? current[productKey] : productHasSelected;
+                  return { ...current, [productKey]: !currentExpanded };
+                });
+              }}
+            >
+              <span className="tree-caret" />
+              <div>
+                <strong>{resourceTypeLabels[product.resourceType]}</strong>
+                <span>{product.rows.length} 个实例</span>
+              </div>
+            </button>
+            {productExpanded
+              ? product.providers.map((providerNode) => {
+                  const providerKey = `monitorPicker:provider:${providerNode.key}`;
+                  const providerHasSelected = providerNode.rows.some((server) => server.id === selectedServer.id);
+                  const providerExpanded = typeof expandedTree[providerKey] === "boolean" ? expandedTree[providerKey] : providerHasSelected;
+                  return (
+                    <div className="resource-picker-branch provider" key={providerNode.key}>
+                      <button
+                        className={providerExpanded ? "resource-picker-node provider expanded" : "resource-picker-node provider"}
+                        type="button"
+                        onClick={() => {
+                          setExpandedTree((current) => {
+                            const currentExpanded = typeof current[providerKey] === "boolean" ? current[providerKey] : providerHasSelected;
+                            return { ...current, [providerKey]: !currentExpanded };
+                          });
+                        }}
+                      >
+                        <span className="tree-caret" />
+                        <div>
+                          <strong>{providerLabels[providerNode.provider]}</strong>
+                          <span>{providerNode.rows.length} 个实例</span>
+                        </div>
+                      </button>
+                      {providerExpanded
+                        ? providerNode.accounts.map((accountNode) => {
+                            const normalCount = accountNode.rows.filter((server) => server.agentStatus === "online").length;
+                            const abnormalCount = accountNode.rows.length - normalCount;
+                            const accountKey = `monitorPicker:account:${accountNode.key}`;
+                            const accountHasSelected = accountNode.rows.some((server) => server.id === selectedServer.id);
+                            const accountExpanded = typeof expandedTree[accountKey] === "boolean" ? expandedTree[accountKey] : accountHasSelected;
+                            return (
+                              <div className="resource-picker-branch account" key={accountNode.key}>
+                                <button
+                                  className={accountExpanded ? "resource-picker-node account expanded" : "resource-picker-node account"}
+                                  type="button"
+                                  onClick={() => {
+                                    setExpandedTree((current) => {
+                                      const currentExpanded = typeof current[accountKey] === "boolean" ? current[accountKey] : accountHasSelected;
+                                      return { ...current, [accountKey]: !currentExpanded };
+                                    });
+                                  }}
+                                >
+                                  <span className="tree-caret" />
+                                  <div>
+                                    <strong>{accountNode.accountName}</strong>
+                                    <span>{accountNode.rows.length} 个实例，正常 {normalCount} 个，需关注 {abnormalCount} 个</span>
+                                  </div>
+                                </button>
+                                {accountExpanded ? <div className="resource-picker-list">
+                                  {accountNode.rows.map((server) => {
+                                    const isSelected = selectedServer.id === server.id;
+                                    const cpuText = typeof server.cpu === "number" ? formatPercentValue(server.cpu) : "--";
+                                    const memoryText = typeof server.memory === "number" ? formatPercentValue(server.memory) : "--";
+                                    const diskText = typeof server.disk === "number" ? formatPercentValue(server.disk) : "--";
+                                    return (
+                                      <button
+                                        className={isSelected ? "resource-picker-item selected" : "resource-picker-item"}
+                                        type="button"
+                                        key={server.id}
+                                        onClick={() => setSelectedServerId(server.id)}
+                                      >
+                                        <span className="resource-picker-main">
+                                          <strong>{server.name}</strong>
+                                          <em>{server.instanceId}</em>
+                                        </span>
+                                        <span className="resource-picker-meta">
+                                          <span>{server.region} / {server.zone}</span>
+                                          <span>{publicIpLabel(server)}：{server.publicIp}</span>
+                                        </span>
+                                        <span className="resource-picker-stats">
+                                          <span>CPU {cpuText}</span>
+                                          <span>内存 {memoryText}</span>
+                                          <span>磁盘 {diskText}</span>
+                                        </span>
+                                        <span className="resource-picker-state">
+                                          <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div> : null}
+                              </div>
+                            );
+                          })
+                        : null}
+                    </div>
+                  );
+                })
+              : null}
+          </section>
+        );
+      })}
+      {!products.length ? <div className="empty-card">{emptyText}</div> : null}
+    </div>
   );
 
   const renderScopeTree = () => (
@@ -3029,41 +3211,49 @@ export function CloudResourceConsole() {
             </button>
           </div>
         </div>
-        <div className="table-panel">{renderServerTable(monitorServers)}</div>
-        <section className="detail-panel monitor-overview-panel">
-          <div className="section-title monitor-overview-title">
-            <div>
-              <h3>{isRDS ? "RDS 性能监控" : "ECS 云监控"}</h3>
-              <span>{selectedServer.name} / {selectedServer.instanceId}</span>
+        <div className="monitor-workspace">
+          <aside className="monitor-resource-pane">
+            <div className="workspace-pane-title">
+              <strong>资源选择</strong>
+              <span>按产品和账号快速定位</span>
             </div>
-            <StatusText status={selectedServer.agentStatus}>{agentStatusLabels[selectedServer.agentStatus]}</StatusText>
-          </div>
-          {freshnessSummary ? (
-            <div className="inline-message">{freshnessSummary}</div>
-          ) : null}
-          <div className="monitor-resource-summary">
-            <span><b>云平台 / 账号</b>{providerLabels[selectedServer.provider]} / {account?.name ?? "--"}</span>
-            <span><b>地域 / 可用区</b>{selectedServer.region} / {selectedServer.zone}</span>
-            <span><b>{isRDS ? "引擎 / 规格" : "系统 / 规格"}</b>{selectedServer.os} / {selectedServer.spec}</span>
-            <span><b>{publicIpLabel(selectedServer)}</b>{selectedServer.publicIp}</span>
-            <span><b>到期状态</b>{expiration.text}</span>
-          </div>
-          <div className="monitor-data-summary">
-            <span><b>指标分组</b>{isRDS ? "RDS 性能参数" : "ECS 主机、网络、磁盘吞吐"}</span>
-            <span><b>可用图表</b>{okMetricCount} 项</span>
-            <span><b>异常 / 空数据</b>{errorMetricCount} / {emptyMetricCount}</span>
-            <span><b>数据来源</b>{sampleSources.length ? sampleSources.join("、") : "等待云厂商返回采样"}</span>
-          </div>
-          <div className="monitor-chart-grid">
-            {chartRows.map((item) => <MetricChartCard item={item} key={item.key} />)}
-            {!chartRows.length ? (
-              <div className="monitor-chart-empty">
-                <strong>暂无可展示的监控图表</strong>
-                <span>{freshness.message || "云厂商暂未返回该资源的采样点"}</span>
+            {renderResourcePicker(monitorResourceTree, "当前没有可展示的监控资源")}
+          </aside>
+          <section className="detail-panel monitor-overview-panel">
+            <div className="section-title monitor-overview-title">
+              <div>
+                <h3>{isRDS ? "RDS 性能监控" : "ECS 云监控"}</h3>
+                <span>{selectedServer.name} / {selectedServer.instanceId}</span>
               </div>
+              <StatusText status={selectedServer.agentStatus}>{agentStatusLabels[selectedServer.agentStatus]}</StatusText>
+            </div>
+            {freshnessSummary ? (
+              <div className="inline-message">{freshnessSummary}</div>
             ) : null}
-          </div>
-        </section>
+            <div className="monitor-resource-summary">
+              <span><b>云平台 / 账号</b>{providerLabels[selectedServer.provider]} / {account?.name ?? "--"}</span>
+              <span><b>地域 / 可用区</b>{selectedServer.region} / {selectedServer.zone}</span>
+              <span><b>{isRDS ? "引擎 / 规格" : "系统 / 规格"}</b>{selectedServer.os} / {selectedServer.spec}</span>
+              <span><b>{publicIpLabel(selectedServer)}</b>{selectedServer.publicIp}</span>
+              <span><b>到期状态</b>{expiration.text}</span>
+            </div>
+            <div className="monitor-data-summary">
+              <span><b>指标分组</b>{isRDS ? "RDS 性能参数" : "ECS 主机、网络、磁盘吞吐"}</span>
+              <span><b>可用图表</b>{okMetricCount} 项</span>
+              <span><b>异常 / 空数据</b>{errorMetricCount} / {emptyMetricCount}</span>
+              <span><b>数据来源</b>{sampleSources.length ? sampleSources.join("、") : "等待云厂商返回采样"}</span>
+            </div>
+            <div className="monitor-chart-grid">
+              {chartRows.map((item) => <MetricChartCard item={item} key={item.key} />)}
+              {!chartRows.length ? (
+                <div className="monitor-chart-empty">
+                  <strong>暂无可展示的监控图表</strong>
+                  <span>{freshness.message || "云厂商暂未返回该资源的采样点"}</span>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        </div>
       </section>
     );
   };
@@ -3097,54 +3287,14 @@ export function CloudResourceConsole() {
             </button>
           </div>
         </div>
-        <div className="agents-layout">
-          <div className="agent-groups">
-            {agentGroups.map((group) => (
-              <section className="agent-group" key={group.status}>
-                <div className="agent-group-title">
-                  <div>
-                    <h3>{group.label}</h3>
-                    <span>{group.description}</span>
-                  </div>
-                  <StatusText status={group.status}>{String(group.rows.length)}</StatusText>
-                </div>
-                <div className="table-panel agent-table-panel">
-                  <table className="data-table agent-table">
-                    <thead>
-                      <tr>
-                        <th>资源</th>
-                        <th>账号 / 地域</th>
-                        <th>资源类型</th>
-                        <th>最近采样</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.rows.map((server) => {
-                        const account = getAccount(server.accountId);
-                        return (
-                          <tr
-                            className={selectedServer.id === server.id ? "selected" : ""}
-                            key={server.id}
-                            onClick={() => setSelectedServerId(server.id)}
-                          >
-                            <td><strong>{server.name}</strong><span>{server.instanceId}</span></td>
-                            <td>{account?.alias ?? "--"}<span>{server.region} / {server.zone}</span></td>
-                            <td>{resourceTypeLabels[getResourceType(server)]}</td>
-                            <td>{server.lastSeen}</td>
-                          </tr>
-                        );
-                      })}
-                      {!group.rows.length ? (
-                        <tr>
-                          <td className="empty-cell" colSpan={4}>当前没有该状态的资源</td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-            ))}
-          </div>
+        <div className="monitor-workspace agent-workspace">
+          <aside className="monitor-resource-pane">
+            <div className="workspace-pane-title">
+              <strong>探针资源</strong>
+              <span>按产品和账号筛选状态</span>
+            </div>
+            {renderResourcePicker(agentResourceTree, "当前没有可展示的探针资源")}
+          </aside>
           <section className="detail-panel agent-detail-panel">
             <div className="section-title monitor-overview-title">
               <div>

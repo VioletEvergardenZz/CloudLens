@@ -151,6 +151,11 @@ func (c *Client) listRegionRDSInstances(region string) ([]RDSInstance, error) {
 			} else {
 				instance.DetailErrors = append(instance.DetailErrors, fmt.Sprintf("读取 RDS 连接信息失败: %v", err))
 			}
+			if usage, err := describeRDSResourceUsage(client, item.DBInstanceId, instance.StorageGB); err == nil {
+				instance.ResourceUsage = usage
+			} else {
+				instance.DetailErrors = append(instance.DetailErrors, fmt.Sprintf("读取 RDS 官方空间用量失败: %v", err))
+			}
 			out = append(out, instance)
 		}
 		if len(out) >= resp.TotalRecordCount || len(pageItems) == 0 {
@@ -171,6 +176,33 @@ func describeRDSInstanceAttribute(client *rds.Client, instanceID string) (rds.DB
 		return rds.DBInstanceAttribute{}, fmt.Errorf("RDS 未返回实例详情")
 	}
 	return resp.Items.DBInstanceAttribute[0], nil
+}
+
+func describeRDSResourceUsage(client *rds.Client, instanceID string, storageGB int) (*RDSResourceUsage, error) {
+	req := rds.CreateDescribeResourceUsageRequest()
+	req.DBInstanceId = strings.TrimSpace(instanceID)
+	resp, err := client.DescribeResourceUsage(req)
+	if err != nil {
+		return nil, err
+	}
+	usage := &RDSResourceUsage{
+		DBInstanceID:    strings.TrimSpace(resp.DBInstanceId),
+		Engine:          strings.TrimSpace(resp.Engine),
+		DiskUsedBytes:   nonNegativeBytes(resp.DiskUsed),
+		DataSizeBytes:   nonNegativeBytes(resp.DataSize),
+		LogSizeBytes:    nonNegativeBytes(resp.LogSize),
+		SQLSizeBytes:    nonNegativeBytes(resp.SQLSize),
+		BackupSizeBytes: nonNegativeBytes(resp.BackupSize),
+		Source:          "rds.DescribeResourceUsage",
+	}
+	if usage.DBInstanceID == "" {
+		usage.DBInstanceID = strings.TrimSpace(instanceID)
+	}
+	if storageGB > 0 && usage.DiskUsedBytes > 0 {
+		percent := (float64(usage.DiskUsedBytes) / (float64(storageGB) * 1024 * 1024 * 1024)) * 100
+		usage.StorageUsagePercent = &percent
+	}
+	return usage, nil
 }
 
 func describeRDSInstanceNetInfo(client *rds.Client, instanceID string) ([]RDSEndpoint, error) {
@@ -195,6 +227,13 @@ func describeRDSInstanceNetInfo(client *rds.Client, instanceID string) ([]RDSEnd
 		})
 	}
 	return endpoints, nil
+}
+
+func nonNegativeBytes(value int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value
 }
 
 func (c *Client) Metric(metricName, instanceID, region string, minutes int, period string) (*MetricSeries, error) {
