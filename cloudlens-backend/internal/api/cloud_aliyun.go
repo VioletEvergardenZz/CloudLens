@@ -89,6 +89,41 @@ func (h *handler) cloudAliyunInstances(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// cloudAliyunRDSInstances 返回当前只读 RAM 账号下的 RDS 实例列表。
+// 详情和连接地址按实例做 best-effort 补充，单个详情接口失败不会丢掉基础实例。
+func (h *handler) cloudAliyunRDSInstances(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	client, account, err := h.newAliyunCloudClientFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
+	items, err := client.ListRDSInstances(regions)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": humanizeAliyunCloudError(err),
+			"code":  classifyAliyunCloudError(err),
+		})
+		return
+	}
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accountId": accountID,
+		"ok":        true,
+		"provider":  aliyuncloud.ProviderName,
+		"resource":  "rds",
+		"items":     items,
+		"total":     len(items),
+	})
+}
+
 // cloudAliyunMetrics 返回单台 ECS 的一个云监控指标序列
 // 当前仅用于验证真实链路，前端可按需传 metric=cpu_total 等指标名。
 func (h *handler) cloudAliyunMetrics(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +166,63 @@ func (h *handler) cloudAliyunMetrics(w http.ResponseWriter, r *http.Request) {
 		"ok":        true,
 		"provider":  aliyuncloud.ProviderName,
 		"series":    series,
+	})
+}
+
+// cloudAliyunRDSOverview 返回单台 RDS 的性能参数集合。
+// 阿里云 RDS 单次最多查询 30 个性能参数，客户端内部会分批并把不支持的 Key 降级为局部错误。
+func (h *handler) cloudAliyunRDSOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	query := r.URL.Query()
+	dbInstanceID := firstCloudQuery(r, "dbInstanceId", "dbInstanceID", "instanceId", "id")
+	region := firstCloudQuery(r, "region", "regionId")
+	engine := firstCloudQuery(r, "engine")
+	if strings.TrimSpace(dbInstanceID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dbInstanceId 不能为空"})
+		return
+	}
+	minutes := parseCloudInt(query.Get("minutes"), 30, 1, 24*60)
+	client, account, err := h.newAliyunCloudClientFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	metrics, errorsByMetric, err := client.RDSPerformance(dbInstanceID, region, engine, minutes, query.Get("period"))
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": humanizeAliyunCloudError(err),
+			"code":  classifyAliyunCloudError(err),
+		})
+		return
+	}
+	availableMetricCount := countAliyunMetricSeries(metrics)
+	status := "ok"
+	message := ""
+	if availableMetricCount == 0 {
+		status = "no_metric_data"
+		message = "未查询到 RDS 性能数据，请检查 AliyunRDSReadOnlyAccess 权限、实例地域和性能参数是否支持"
+		if len(errorsByMetric) > 0 {
+			status = "metric_error"
+			message = firstCloudMapValue(errorsByMetric)
+		}
+	}
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accountId":            accountID,
+		"ok":                   true,
+		"provider":             aliyuncloud.ProviderName,
+		"resource":             "rds",
+		"status":               status,
+		"message":              message,
+		"availableMetricCount": availableMetricCount,
+		"metrics":              metrics,
+		"errors":               errorsByMetric,
 	})
 }
 
@@ -367,6 +459,10 @@ func classifyAliyunCloudError(err error) string {
 		return "ALIYUN_PERMISSION_DENIED"
 	case strings.Contains(msg, "describeinstances"):
 		return "ALIYUN_ECS_PERMISSION_OR_REGION_ERROR"
+	case strings.Contains(msg, "describedbinstances") || strings.Contains(msg, "describedbinstanceattribute") || strings.Contains(msg, "describedbinstancenetinfo"):
+		return "ALIYUN_RDS_PERMISSION_OR_REGION_ERROR"
+	case strings.Contains(msg, "describedbinstanceperformance") || strings.Contains(msg, "rds 性能"):
+		return "ALIYUN_RDS_METRIC_ERROR"
 	case strings.Contains(msg, "云监控") || strings.Contains(msg, "describemetric"):
 		return "ALIYUN_CMS_PERMISSION_OR_METRIC_ERROR"
 	default:
@@ -389,9 +485,16 @@ func humanizeAliyunCloudError(err error) string {
 		if strings.Contains(raw, "describeinstances") || strings.Contains(raw, "ecs") {
 			return "当前 RAM 账号缺少 ECS 只读权限，请添加 AliyunECSReadOnlyAccess"
 		}
-		return "当前 RAM 账号权限不足，请确认 ECS 只读和云监控只读权限"
+		if strings.Contains(raw, "describedb") || strings.Contains(raw, "rds") {
+			return "当前 RAM 账号缺少 RDS 只读权限，请添加 AliyunRDSReadOnlyAccess"
+		}
+		return "当前 RAM 账号权限不足，请确认 ECS、RDS 和云监控只读权限"
 	case "ALIYUN_ECS_PERMISSION_OR_REGION_ERROR":
 		return "ECS 实例读取失败，请检查 AliyunECSReadOnlyAccess 权限和账号地域配置"
+	case "ALIYUN_RDS_PERMISSION_OR_REGION_ERROR":
+		return "RDS 实例读取失败，请检查 AliyunRDSReadOnlyAccess 权限和账号地域配置"
+	case "ALIYUN_RDS_METRIC_ERROR":
+		return "RDS 性能指标读取失败，请检查 AliyunRDSReadOnlyAccess 权限、实例地域和性能参数支持情况"
 	case "ALIYUN_CMS_PERMISSION_OR_METRIC_ERROR":
 		return "云监控指标读取失败，请检查 AliyunCloudMonitorReadOnlyAccess 权限、实例地域和云监控插件状态"
 	default:

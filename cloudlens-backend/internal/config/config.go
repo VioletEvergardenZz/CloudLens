@@ -41,6 +41,8 @@ const (
 	defaultAITimeout                        = "20s"
 	defaultAliyunRegion                     = "cn-hangzhou"
 	defaultAliyunMetricPeriod               = "60"
+	defaultHuaweiRegion                     = "cn-north-4"
+	defaultHuaweiMetricPeriod               = "60"
 	defaultUploadRetryMaxAttempts           = 4
 	defaultUploadResumablePartSize          = 10 * 1024 * 1024
 	defaultUploadResumableRoutines          = 1
@@ -62,14 +64,15 @@ var allowedLogLevels = map[string]struct{}{
 
 // LoadConfig 加载配置文件并应用默认值
 func LoadConfig(configFile string) (*models.Config, error) {
-	configBaseDir, err := resolveConfigBaseDir(configFile)
+	cleanedConfigFile := strings.TrimSpace(configFile)
+	configBaseDir, err := resolveConfigBaseDir(cleanedConfigFile)
 	if err != nil {
 		return nil, err
 	}
 
 	// 优先加载 .env，让后续 YAML 中的 ${KEY} 可以被解析
 	envCandidates := []string{".env"}
-	if dir := filepath.Dir(configFile); dir != "" && dir != "." {
+	if dir := filepath.Dir(cleanedConfigFile); dir != "" && dir != "." {
 		envCandidates = append(envCandidates, filepath.Join(dir, ".env"))
 	}
 	if err := loadEnvFiles(envCandidates...); err != nil {
@@ -77,17 +80,19 @@ func LoadConfig(configFile string) (*models.Config, error) {
 	}
 
 	var cfg models.Config //值类型结构体 在栈上分配、读完填数据后再取地址即可
-	data, err := os.ReadFile(configFile)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	if cleanedConfigFile != "" {
+		data, err := os.ReadFile(cleanedConfigFile)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("读取配置文件失败: %w", err)
+			}
+			// 云资产验证场景允许只用环境变量启动，避免为了只读查询云资源还必须准备完整文件入云配置。
+		} else if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("解析配置文件失败: %w", err)
 		}
-		// 云资产验证场景允许只用环境变量启动，避免为了只读查询云资源还必须准备完整文件入云配置。
-	} else if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
-	runtimeCfg, err := loadRuntimeConfig(configFile)
+	runtimeCfg, err := loadRuntimeConfig(cleanedConfigFile)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +278,12 @@ func applyEnvOverrides(cfg *models.Config) error {
 	cfg.AliyunRegion = stringFromEnvAny(cfg.AliyunRegion, "ALIYUN_REGION", "ALIYUN_REGION_ID", "ALIBABA_CLOUD_REGION_ID")
 	cfg.AliyunRegions = stringFromEnvAny(cfg.AliyunRegions, "ALIYUN_REGIONS", "ALIYUN_REGION_IDS")
 	cfg.AliyunMetricPeriod = stringFromEnv("ALIYUN_METRIC_PERIOD", cfg.AliyunMetricPeriod)
+	cfg.HuaweiAccessKeyID = stringFromEnvAny(cfg.HuaweiAccessKeyID, "HUAWEI_ACCESS_KEY_ID", "HUAWEICLOUD_ACCESS_KEY_ID")
+	cfg.HuaweiAccessKeySecret = stringFromEnvAny(cfg.HuaweiAccessKeySecret, "HUAWEI_ACCESS_KEY_SECRET", "HUAWEICLOUD_ACCESS_KEY_SECRET")
+	cfg.HuaweiProjectID = stringFromEnvAny(cfg.HuaweiProjectID, "HUAWEI_PROJECT_ID", "HUAWEICLOUD_PROJECT_ID")
+	cfg.HuaweiRegion = stringFromEnvAny(cfg.HuaweiRegion, "HUAWEI_REGION", "HUAWEI_REGION_ID", "HUAWEICLOUD_REGION_ID")
+	cfg.HuaweiRegions = stringFromEnvAny(cfg.HuaweiRegions, "HUAWEI_REGIONS", "HUAWEI_REGION_IDS", "HUAWEICLOUD_REGIONS")
+	cfg.HuaweiMetricPeriod = stringFromEnv("HUAWEI_METRIC_PERIOD", cfg.HuaweiMetricPeriod)
 	retryMaxAttempts, ok, err := intFromEnv("UPLOAD_RETRY_MAX_ATTEMPTS")
 	if err != nil {
 		return err
@@ -389,6 +400,12 @@ func applyDefaults(cfg *models.Config) {
 	}
 	if strings.TrimSpace(cfg.AliyunMetricPeriod) == "" {
 		cfg.AliyunMetricPeriod = defaultAliyunMetricPeriod
+	}
+	if strings.TrimSpace(cfg.HuaweiRegion) == "" {
+		cfg.HuaweiRegion = defaultHuaweiRegion
+	}
+	if strings.TrimSpace(cfg.HuaweiMetricPeriod) == "" {
+		cfg.HuaweiMetricPeriod = defaultHuaweiMetricPeriod
 	}
 }
 

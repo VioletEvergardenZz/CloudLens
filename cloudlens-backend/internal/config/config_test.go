@@ -395,6 +395,53 @@ region: "test-region"
 	}
 }
 
+func TestLoadConfigWithoutConfigFileUsesDefaults(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	t.Chdir(runtimeRoot)
+	t.Setenv("OSS_BUCKET", "")
+	t.Setenv("OSS_ENDPOINT", "")
+	t.Setenv("OSS_REGION", "")
+	t.Setenv("OSS_AK", "")
+	t.Setenv("OSS_SK", "")
+	t.Setenv("AI_ENABLED", "false")
+	t.Setenv("API_BIND", "")
+	t.Setenv("UPLOAD_QUEUE_PERSIST_ENABLED", "false")
+	t.Setenv("CONTROL_DATA_DIR", "")
+	t.Setenv("CLOUD_DATA_DIR", "")
+	t.Setenv("KB_DATA_DIR", "")
+	t.Setenv("ALERT_SOURCE_MIRROR_ROOT", "")
+
+	config, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("无配置文件启动应该成功: %v", err)
+	}
+
+	if config.WatchDir != "" {
+		t.Fatalf("WatchDir 默认应为空，实际 %s", config.WatchDir)
+	}
+	if config.APIBind != ":8080" {
+		t.Fatalf("APIBind 默认值期望 :8080，实际 %s", config.APIBind)
+	}
+	if config.LogLevel != "info" {
+		t.Fatalf("LogLevel 默认值期望 info，实际 %s", config.LogLevel)
+	}
+	if config.UploadWorkers != 3 {
+		t.Fatalf("UploadWorkers 默认值期望 3，实际 %d", config.UploadWorkers)
+	}
+	if config.AliyunRegion != "cn-hangzhou" {
+		t.Fatalf("AliyunRegion 默认值期望 cn-hangzhou，实际 %s", config.AliyunRegion)
+	}
+	if config.AliyunMetricPeriod != "60" {
+		t.Fatalf("AliyunMetricPeriod 默认值期望 60，实际 %s", config.AliyunMetricPeriod)
+	}
+	if got, want := os.Getenv("CLOUDLENS_RUNTIME_ROOT"), runtimeRoot; got != want {
+		t.Fatalf("CLOUDLENS_RUNTIME_ROOT 期望 %s，实际 %s", want, got)
+	}
+	if got, want := os.Getenv("CLOUD_DATA_DIR"), filepath.Join(runtimeRoot, "data", "cloud"); got != want {
+		t.Fatalf("CLOUD_DATA_DIR 期望 %s，实际 %s", want, got)
+	}
+}
+
 func TestLoadConfigWithPersistQueueDefaultFile(t *testing.T) {
 	watchDir := filepath.ToSlash(t.TempDir())
 	cfgContent := fmt.Sprintf(`

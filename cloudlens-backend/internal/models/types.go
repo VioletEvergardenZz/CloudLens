@@ -73,6 +73,12 @@ type Config struct {
 	AliyunRegion                     string        `yaml:"aliyun_region"`
 	AliyunRegions                    string        `yaml:"aliyun_regions"`
 	AliyunMetricPeriod               string        `yaml:"aliyun_metric_period"`
+	HuaweiAccessKeyID                string        `yaml:"huawei_access_key_id"`
+	HuaweiAccessKeySecret            string        `yaml:"huawei_access_key_secret"`
+	HuaweiProjectID                  string        `yaml:"huawei_project_id"`
+	HuaweiRegion                     string        `yaml:"huawei_region"`
+	HuaweiRegions                    string        `yaml:"huawei_regions"`
+	HuaweiMetricPeriod               string        `yaml:"huawei_metric_period"`
 }
 
 // FileEvent 文件事件结构体

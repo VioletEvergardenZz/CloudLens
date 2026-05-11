@@ -1,5 +1,5 @@
 // 本文件用于云账号配置 API。
-// 文件职责：提供阿里云 ECS 账号的新增、列表、删除和权限测试入口。
+// 文件职责：提供云厂商 ECS 账号的新增、列表、删除和权限测试入口。
 // 边界与容错：接口只管理查询凭据，不执行云资源写操作。
 
 package api
@@ -13,6 +13,7 @@ import (
 	"time"
 
 	aliyuncloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/aliyun"
+	huaweicloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/huawei"
 )
 
 type cloudAccountCheck struct {
@@ -120,6 +121,22 @@ func (h *handler) cloudAccountByIDHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handler) cloudAccountTest(w http.ResponseWriter, id int64) {
+	account, err := h.cloudStore.Get(id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	switch normalizeCloudProvider(account.Provider) {
+	case aliyuncloud.ProviderName:
+		h.cloudAliyunAccountTest(w, id)
+	case huaweicloud.ProviderName:
+		h.cloudHuaweiAccountTest(w, id)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的云平台"})
+	}
+}
+
+func (h *handler) cloudAliyunAccountTest(w http.ResponseWriter, id int64) {
 	cfg, account, err := h.cloudStore.AliyunConfig(id)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -162,9 +179,29 @@ func (h *handler) cloudAccountTest(w http.ResponseWriter, id int64) {
 
 	status := "ok"
 	message := ecsMessage
-	if len(instances) == 0 {
+	rdsInstances, rdsErr := client.ListRDSInstances(nil)
+	if rdsErr != nil {
 		status = "warning"
-		message = "ECS 权限可用，但当前地域未发现实例"
+		message = humanizeAliyunCloudError(rdsErr)
+		checks = append(checks, cloudAccountCheck{
+			Name:    "RDS 实例读取",
+			Status:  "error",
+			OK:      false,
+			Message: message,
+		})
+	} else {
+		checks = append(checks, cloudAccountCheck{
+			Name:    "RDS 实例读取",
+			Status:  "ok",
+			OK:      true,
+			Message: fmt.Sprintf("RDS 只读正常，发现 %d 个实例", len(rdsInstances)),
+		})
+	}
+	if len(instances) == 0 {
+		if status == "ok" {
+			status = "warning"
+			message = "ECS 权限可用，但当前地域未发现实例"
+		}
 		checks = append(checks, cloudAccountCheck{
 			Name:    "云监控读取",
 			Status:  "skipped",
@@ -218,6 +255,105 @@ func (h *handler) cloudAccountTest(w http.ResponseWriter, id int64) {
 	})
 }
 
+func (h *handler) cloudHuaweiAccountTest(w http.ResponseWriter, id int64) {
+	cfg, account, err := h.cloudStore.HuaweiConfig(id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	client, err := huaweicloud.NewClient(cfg)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	checkedAt := time.Now().UTC()
+	checks := make([]cloudAccountCheck, 0, 2)
+	instances, err := client.ListInstances(nil)
+	if err != nil {
+		message := humanizeHuaweiCloudError(err)
+		checks = append(checks, cloudAccountCheck{
+			Name:    "ECS 实例读取",
+			Status:  "error",
+			OK:      false,
+			Message: message,
+		})
+		_ = h.cloudStore.UpdateCheck(id, "error", message, checkedAt)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":        false,
+			"provider":  huaweicloud.ProviderName,
+			"account":   sanitizeCloudAccount(*account),
+			"checks":    checks,
+			"checkedAt": formatCloudTime(checkedAt),
+		})
+		return
+	}
+	ecsMessage := fmt.Sprintf("ECS 只读正常，发现 %d 台实例", len(instances))
+	checks = append(checks, cloudAccountCheck{
+		Name:    "ECS 实例读取",
+		Status:  "ok",
+		OK:      true,
+		Message: ecsMessage,
+	})
+
+	status := "ok"
+	message := ecsMessage
+	if len(instances) == 0 {
+		status = "warning"
+		message = "ECS 权限可用，但当前地域未发现实例"
+		checks = append(checks, cloudAccountCheck{
+			Name:    "云监控读取",
+			Status:  "skipped",
+			OK:      false,
+			Message: "未发现 ECS 实例，无法验证云监控指标",
+		})
+	} else {
+		first := instances[0]
+		series, metricErr := client.Metric("cpu_util", first.ID, first.RegionID, 30, account.MetricPeriod)
+		if metricErr != nil {
+			status = "warning"
+			message = humanizeHuaweiCloudError(metricErr)
+			checks = append(checks, cloudAccountCheck{
+				Name:    "云监控读取",
+				Status:  "error",
+				OK:      false,
+				Message: message,
+			})
+		} else if series == nil || len(series.Points) == 0 {
+			status = "warning"
+			message = "云监控接口可访问，但暂未返回 CPU 指标，请检查 CES 权限、实例地域和监控采样延迟"
+			checks = append(checks, cloudAccountCheck{
+				Name:    "云监控读取",
+				Status:  "empty",
+				OK:      false,
+				Message: message,
+			})
+		} else {
+			checks = append(checks, cloudAccountCheck{
+				Name:    "云监控读取",
+				Status:  "ok",
+				OK:      true,
+				Message: "云监控 CPU 指标读取正常",
+			})
+		}
+	}
+	if err := h.cloudStore.UpdateCheck(id, status, message, checkedAt); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	updated, _ := h.cloudStore.Get(id)
+	if updated == nil {
+		updated = account
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        status == "ok",
+		"provider":  huaweicloud.ProviderName,
+		"account":   sanitizeCloudAccount(*updated),
+		"checks":    checks,
+		"checkedAt": formatCloudTime(checkedAt),
+	})
+}
+
 func parseCloudAccountPath(path string) (int64, string, error) {
 	trimmed := strings.Trim(strings.TrimPrefix(path, "/api/cloud/accounts/"), "/")
 	if trimmed == "" || strings.HasPrefix(trimmed, "/api/") {
@@ -249,5 +385,6 @@ func sanitizeCloudAccount(item cloudAccountRecord) cloudAccountRecord {
 	if item.Provider == "" {
 		item.Provider = aliyuncloud.ProviderName
 	}
+	item.Provider = normalizeCloudProvider(item.Provider)
 	return item
 }

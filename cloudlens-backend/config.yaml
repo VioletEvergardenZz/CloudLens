@@ -84,7 +84,7 @@ api_cors_origins: "${API_CORS_ORIGINS}"
 system_resource_enabled: false
 
 # 多云资源监控配置
-# cloud_assets_enabled 是产品主线开关；当前已实现阿里云 ECS 只读账号、实例列表与基础监控查询。
+# cloud_assets_enabled 是产品主线开关；当前已实现阿里云 ECS/RDS 与华为云 ECS 只读资源监控。
 cloud_assets_enabled: true
 # 可通过控制台“云账号”保存多个账号；以下字段只作为临时环境变量/单账号兜底。
 aliyun_access_key_id: "${ALIYUN_ACCESS_KEY_ID}"
@@ -92,6 +92,12 @@ aliyun_access_key_secret: "${ALIYUN_ACCESS_KEY_SECRET}"
 aliyun_region: "${ALIYUN_REGION}"
 aliyun_regions: "${ALIYUN_REGIONS}"
 aliyun_metric_period: "60"
+huawei_access_key_id: "${HUAWEI_ACCESS_KEY_ID}"
+huawei_access_key_secret: "${HUAWEI_ACCESS_KEY_SECRET}"
+huawei_project_id: "${HUAWEI_PROJECT_ID}"
+huawei_region: "${HUAWEI_REGION}"
+huawei_regions: "${HUAWEI_REGIONS}"
+huawei_metric_period: "60"
 
 # 告警配置（建议通过控制台设置）
 # 规则内容存于 config.runtime.yaml 的 alert_rules

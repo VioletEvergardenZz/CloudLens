@@ -32,7 +32,11 @@ func main() {
 // run 用于执行主流程
 func run() error {
 	configPath := parseFlags()
-	log.Printf("程序启动，配置文件: %s", configPath)
+	if strings.TrimSpace(configPath) == "" {
+		log.Print("程序启动，未指定配置文件，将使用内置默认值和环境变量")
+	} else {
+		log.Printf("程序启动，配置文件: %s", configPath)
+	}
 
 	cfg, err := loadAndValidateConfig(configPath)
 	if err != nil {
@@ -67,7 +71,7 @@ func run() error {
 // parseFlags 用于解析输入参数或配置
 func parseFlags() string {
 	var configPath string
-	flag.StringVar(&configPath, "config", "config.yaml", "配置文件路径")
+	flag.StringVar(&configPath, "config", "", "配置文件路径，留空则使用内置默认值和环境变量")
 	flag.Parse()
 	return configPath
 }

@@ -1,12 +1,12 @@
 /**
  * 文件职责：承载多云资产管理后台首页
- * 关键交互：左侧菜单切换页面，云资产页按云平台、账号、地域聚合服务器
+ * 关键交互：左侧菜单切换页面，云资产页按云平台、账号、地域聚合 ECS/RDS 资源
  * 边界处理：后端云账号同步未接入前使用 mock 数据，接口接入后只替换数据来源
  */
 
 /* 本文件用于普通后台 Web 页面，融合 Komari 的探针监控视角和云镜当前的多云监控主线 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, USE_MOCK, buildApiHeaders } from "./console/dashboardApi";
 import "./CloudResourceConsole.css";
 
@@ -17,7 +17,6 @@ type PageKey =
   | "monitor"
   | "agents"
   | "alerts"
-  | "files"
   | "ai"
   | "knowledge"
   | "sync"
@@ -30,8 +29,10 @@ type AgentStatus = "online" | "stale" | "missing" | "offline";
 type ScopeKind = "all" | "provider" | "account" | "accountRegion" | "region";
 type ThemeMode = "light" | "dark";
 type PublicIpType = "public" | "eip" | "none";
-type MetricSortKey = "cpu" | "memory" | "disk";
+type ResourceType = "ecs" | "rds";
+type ServerSortKey = "cpu" | "memory" | "disk" | "expiration";
 type SortDirection = "asc" | "desc";
+type ExpirationStatus = "normal" | "expiring" | "expired" | "no_expiration" | "unknown";
 
 type CloudAccount = {
   id: string;
@@ -40,7 +41,8 @@ type CloudAccount = {
   alias: string;
   uid: string;
   owner: string;
-  env: string;
+  scope: string;
+  projectId?: string;
   status: AccountStatus;
   lastSync: string;
   regions: string[];
@@ -53,6 +55,7 @@ type CloudServer = {
   id: string;
   accountId: string;
   provider: Provider;
+  resourceType?: ResourceType;
   region: string;
   zone: string;
   instanceId: string;
@@ -64,6 +67,28 @@ type CloudServer = {
   privateIp: string;
   os: string;
   spec: string;
+  chargeType?: string;
+  isSpot?: boolean;
+  spotStrategy?: string;
+  expiredAt?: string;
+  expiresInDays?: number;
+  expirationStatus?: ExpirationStatus;
+  expirationText?: string;
+  engine?: string;
+  engineVersion?: string;
+  dbInstanceType?: string;
+  dbCategory?: string;
+  dbClass?: string;
+  dbStorageGb?: number;
+  dbStorageType?: string;
+  dbConnectionString?: string;
+  dbPort?: string;
+  dbMaxConnections?: number;
+  dbMaxIops?: number;
+  dbMaxIombps?: number;
+  dbEndpointCount?: number;
+  dbLockMode?: string;
+  dbLockReason?: string;
   status: ServerStatus;
   agentStatus: AgentStatus;
   cpu: number;
@@ -82,7 +107,7 @@ type OperationEvent = {
   id: string;
   serverId: string;
   time: string;
-  type: "告警" | "文件入云" | "AI分析" | "知识库" | "探针";
+  type: "告警" | "AI分析" | "知识库" | "探针";
   level: "info" | "warning" | "critical";
   message: string;
   status: string;
@@ -101,13 +126,16 @@ type AliyunInstance = {
   id: string;
   name: string;
   hostName: string;
-  provider: "aliyun";
+  provider: Provider;
   regionId: string;
   zoneId: string;
   status: string;
   osName: string;
   osType: string;
   type: string;
+  chargeType?: string;
+  isSpot?: boolean;
+  spotStrategy?: string;
   cpu: number;
   memoryMb: number;
   publicIps: string[];
@@ -119,6 +147,9 @@ type AliyunInstance = {
   securityGroupIds: string[];
   createdAt: string;
   expiredAt: string;
+  expiresInDays?: number;
+  expirationStatus?: ExpirationStatus;
+  expirationMessage?: string;
 };
 
 type AliyunInstancesResponse = {
@@ -139,6 +170,10 @@ type AliyunMetricPoint = {
 type AliyunMetricSeries = {
   namespace?: string;
   metricName: string;
+  label?: string;
+  subKey?: string;
+  unit?: string;
+  valueFormat?: string;
   period?: string;
   points?: AliyunMetricPoint[];
 };
@@ -146,6 +181,7 @@ type AliyunMetricSeries = {
 type AliyunOverviewResponse = {
   ok?: boolean;
   accountId?: number;
+  resource?: ResourceType | string;
   status?: string;
   message?: string;
   availableMetricCount?: number;
@@ -154,11 +190,73 @@ type AliyunOverviewResponse = {
   error?: string;
 };
 
+type AliyunRDSEndpoint = {
+  connectionString: string;
+  port: string;
+  ipAddress?: string;
+  ipType?: string;
+  connectionStringType?: string;
+  availability?: string;
+  vpcId?: string;
+  vSwitchId?: string;
+};
+
+type AliyunRDSInstance = {
+  id: string;
+  name: string;
+  provider: "aliyun";
+  regionId: string;
+  zoneId: string;
+  engine: string;
+  engineVersion: string;
+  status: string;
+  lockMode?: string;
+  lockReason?: string;
+  type?: string;
+  category?: string;
+  class?: string;
+  classType?: string;
+  cpu?: number;
+  cpuRaw?: string;
+  memoryMb?: number;
+  storageGb?: number;
+  storageType?: string;
+  maxConnections?: number;
+  maxIops?: number;
+  maxIombps?: number;
+  networkType?: string;
+  netType?: string;
+  connectionMode?: string;
+  connectionString?: string;
+  port?: string;
+  vpcId?: string;
+  vSwitchId?: string;
+  createdAt: string;
+  expiredAt: string;
+  payType: string;
+  endpoints?: AliyunRDSEndpoint[];
+  detailErrors?: string[];
+  expiresInDays?: number;
+  expirationStatus?: ExpirationStatus;
+  expirationMessage?: string;
+};
+
+type AliyunRDSInstancesResponse = {
+  ok?: boolean;
+  accountId?: number;
+  provider?: string;
+  resource?: string;
+  items?: AliyunRDSInstance[];
+  total?: number;
+  error?: string;
+};
+
 type ApiCloudAccount = {
   id: number;
-  provider: "aliyun";
+  provider: Provider;
   name: string;
   accessKeyIdMasked: string;
+  projectId?: string;
   regions: string[];
   metricPeriod: string;
   enabled: boolean;
@@ -188,31 +286,16 @@ type CloudAccountTestResponse = {
 };
 
 type CloudAccountForm = {
-  providerName: string;
+  provider: Provider;
   name: string;
   accessKeyId: string;
   accessKeySecret: string;
+  projectId: string;
   regions: string;
   metricPeriod: string;
-  enabled: boolean;
 };
 
-type MonitorMetricKey =
-  | "cpu"
-  | "memory"
-  | "disk"
-  | "load1m"
-  | "internetIn"
-  | "internetOut"
-  | "internetTotal"
-  | "internetBandwidth"
-  | "intranetIn"
-  | "intranetOut"
-  | "intranetTotal"
-  | "intranetBandwidth"
-  | "networkTotal"
-  | "diskReadBps"
-  | "diskWriteBps";
+type MonitorMetricKey = string;
 
 type MonitorMetric = {
   key: MonitorMetricKey;
@@ -236,20 +319,41 @@ const providerLabels: Record<Provider, string> = {
   tencent: "腾讯云",
 };
 
+const supportedAccountProviders: Provider[] = ["aliyun", "huawei"];
+const defaultAccountRegions: Record<Provider, string> = {
+  aliyun: "cn-hangzhou",
+  huawei: "cn-north-4",
+  tencent: "ap-guangzhou",
+};
+
+const resourceTypeLabels: Record<ResourceType, string> = {
+  ecs: "ECS",
+  rds: "RDS",
+};
+
+const getResourceType = (server: CloudServer): ResourceType => server.resourceType ?? "ecs";
+
 const emptyCloudServer: CloudServer = {
   id: "",
   accountId: "aliyun-runtime",
   provider: "aliyun",
+  resourceType: "ecs",
   region: "--",
   zone: "--",
   instanceId: "--",
   name: "--",
-  business: "未选择服务器",
+  business: "未选择资源",
   publicIp: "--",
   publicIpType: "none",
   privateIp: "--",
   os: "--",
   spec: "--",
+  chargeType: "",
+  isSpot: false,
+  spotStrategy: "",
+  expiredAt: "",
+  expirationStatus: "unknown",
+  expirationText: "未返回到期时间",
   status: "maintenance",
   agentStatus: "missing",
   cpu: 0,
@@ -269,13 +373,13 @@ const THEME_STORAGE_KEY = "gwf-cloud-theme";
 const ASSET_REFRESH_INTERVAL_MS = 30_000;
 
 const emptyAccountForm: CloudAccountForm = {
-  providerName: "阿里云 ECS",
+  provider: "aliyun",
   name: "",
   accessKeyId: "",
   accessKeySecret: "",
-  regions: "cn-hangzhou",
+  projectId: "",
+  regions: defaultAccountRegions.aliyun,
   metricPeriod: "60",
-  enabled: true,
 };
 
 const resolveInitialSidebarHidden = () => {
@@ -319,7 +423,7 @@ const menuGroups: Array<{
   {
     title: "云资产",
     items: [
-      { key: "servers", label: "服务器总览", desc: "多云账号服务器" },
+      { key: "servers", label: "资源总览", desc: "ECS/RDS 资源" },
       { key: "accounts", label: "云账号管理", desc: "账号与同步状态" },
       { key: "regions", label: "地域视图", desc: "按地域聚合" },
     ],
@@ -327,7 +431,7 @@ const menuGroups: Array<{
   {
     title: "监控运维",
     items: [
-      { key: "monitor", label: "监控概览", desc: "CPU/内存/磁盘" },
+      { key: "monitor", label: "监控概览", desc: "ECS/RDS 指标" },
       { key: "agents", label: "探针管理", desc: "Agent 接入状态" },
       { key: "alerts", label: "告警事件", desc: "告警与处置" },
     ],
@@ -335,7 +439,6 @@ const menuGroups: Array<{
   {
     title: "扩展能力",
     items: [
-      { key: "files", label: "日志采样", desc: "文件上传与归档" },
       { key: "ai", label: "AI 摘要", desc: "异常辅助分析" },
       { key: "knowledge", label: "知识沉淀", desc: "经验复用与复盘" },
     ],
@@ -357,7 +460,7 @@ const mockAccounts: CloudAccount[] = [
     alias: "阿里云 / 生产",
     uid: "19****6721",
     owner: "生产运维组",
-    env: "生产",
+    scope: "生产环境资源",
     status: "normal",
     lastSync: "13:18:22",
     regions: ["华东1 杭州", "华北2 北京"],
@@ -369,7 +472,7 @@ const mockAccounts: CloudAccount[] = [
     alias: "阿里云 / 海外",
     uid: "13****9026",
     owner: "海外业务组",
-    env: "生产",
+    scope: "生产环境资源",
     status: "warning",
     lastSync: "13:16:04",
     regions: ["中国香港"],
@@ -381,7 +484,7 @@ const mockAccounts: CloudAccount[] = [
     alias: "华为云 / 生产",
     uid: "hw-****-2871",
     owner: "基础平台组",
-    env: "生产",
+    scope: "生产环境资源",
     status: "normal",
     lastSync: "13:15:33",
     regions: ["华北-北京四", "华南-广州"],
@@ -393,7 +496,7 @@ const mockAccounts: CloudAccount[] = [
     alias: "华为云 / 测试",
     uid: "hw-****-1098",
     owner: "研发测试组",
-    env: "测试",
+    scope: "测试环境资源",
     status: "syncing",
     lastSync: "同步中",
     regions: ["华东-上海一"],
@@ -405,7 +508,7 @@ const mockAccounts: CloudAccount[] = [
     alias: "腾讯云 / 实验",
     uid: "tc-****-0516",
     owner: "个人实验",
-    env: "实验",
+    scope: "实验环境资源",
     status: "normal",
     lastSync: "13:08:10",
     regions: ["广州"],
@@ -426,6 +529,8 @@ const mockServers: CloudServer[] = [
     privateIp: "10.18.4.21",
     os: "Alibaba Cloud Linux 3",
     spec: "8C16G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-08-05T00:00:00Z",
     status: "running",
     agentStatus: "online",
     cpu: 42,
@@ -452,6 +557,8 @@ const mockServers: CloudServer[] = [
     privateIp: "10.18.7.18",
     os: "Ubuntu 22.04",
     spec: "2C8G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-05-29T00:00:00Z",
     status: "warning",
     agentStatus: "online",
     cpu: 78,
@@ -478,6 +585,9 @@ const mockServers: CloudServer[] = [
     privateIp: "10.38.2.19",
     os: "Alibaba Cloud Linux 3",
     spec: "2C4G",
+    chargeType: "PostPaid",
+    isSpot: true,
+    spotStrategy: "SpotAsPriceGo",
     status: "running",
     agentStatus: "missing",
     cpu: 18,
@@ -504,6 +614,8 @@ const mockServers: CloudServer[] = [
     privateIp: "172.19.2.11",
     os: "Debian 12",
     spec: "2C4G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-05-17T00:00:00Z",
     status: "running",
     agentStatus: "online",
     cpu: 49,
@@ -530,6 +642,8 @@ const mockServers: CloudServer[] = [
     privateIp: "172.19.3.22",
     os: "Alibaba Cloud Linux 3",
     spec: "2C4G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-05-01T00:00:00Z",
     status: "offline",
     agentStatus: "offline",
     cpu: 0,
@@ -556,6 +670,7 @@ const mockServers: CloudServer[] = [
     privateIp: "10.42.1.11",
     os: "EulerOS 2.0",
     spec: "4C8G",
+    chargeType: "PostPaid",
     status: "running",
     agentStatus: "online",
     cpu: 31,
@@ -582,6 +697,8 @@ const mockServers: CloudServer[] = [
     privateIp: "10.56.9.21",
     os: "EulerOS 2.0",
     spec: "8C32G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-07-20T00:00:00Z",
     status: "warning",
     agentStatus: "online",
     cpu: 55,
@@ -608,6 +725,7 @@ const mockServers: CloudServer[] = [
     privateIp: "10.66.2.33",
     os: "Ubuntu 22.04",
     spec: "2C4G",
+    chargeType: "PostPaid",
     status: "maintenance",
     agentStatus: "stale",
     cpu: 8,
@@ -634,6 +752,8 @@ const mockServers: CloudServer[] = [
     privateIp: "10.70.1.10",
     os: "Debian 12",
     spec: "2C2G",
+    chargeType: "PrePaid",
+    expiredAt: "2026-06-02T00:00:00Z",
     status: "running",
     agentStatus: "online",
     cpu: 16,
@@ -669,15 +789,6 @@ const events: OperationEvent[] = [
     status: "知识库命中 disk-cleanup",
   },
   {
-    id: "evt-003",
-    serverId: "huawei-app-01",
-    time: "13:12:55",
-    type: "文件入云",
-    level: "info",
-    message: "核心应用日志入云完成 24 个",
-    status: "OSS 写入正常",
-  },
-  {
     id: "evt-004",
     serverId: "ecs-web-hk",
     time: "12:39:18",
@@ -701,7 +812,7 @@ const syncTasks: SyncTask[] = [
   {
     id: "sync-aliyun-prod",
     accountId: "aliyun-prod-cn",
-    name: "同步 ECS 实例、地域、安全组",
+    name: "同步 ECS/RDS 实例、地域、安全组",
     status: "完成",
     progress: "100%",
     updatedAt: "13:18:22",
@@ -709,7 +820,7 @@ const syncTasks: SyncTask[] = [
   {
     id: "sync-aliyun-hk",
     accountId: "aliyun-hk",
-    name: "同步香港账号服务器与探针心跳",
+    name: "同步香港账号 ECS/RDS 与监控采样",
     status: "完成",
     progress: "100%",
     updatedAt: "13:16:04",
@@ -732,16 +843,28 @@ const syncTasks: SyncTask[] = [
   },
 ];
 
-const getAliyunStatus = (status: string): ServerStatus => {
+const getCloudServerStatus = (status: string): ServerStatus => {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "running" || normalized === "active") return "running";
+  if (normalized === "stopped" || normalized === "deleted" || normalized === "shutoff" || normalized === "shelved" || normalized === "shelved_offloaded") return "offline";
+  if (["starting", "stopping", "build", "reboot", "hard_reboot", "migrating", "resize", "revert_resize", "verify_resize"].includes(normalized)) {
+    return "maintenance";
+  }
+  return "warning";
+};
+
+const getAliyunRDSStatus = (status: string): ServerStatus => {
   const normalized = status.trim().toLowerCase();
   if (normalized === "running") return "running";
-  if (normalized === "stopped" || normalized === "deleted") return "offline";
-  if (normalized === "starting" || normalized === "stopping") return "maintenance";
+  if (normalized === "stopped" || normalized === "deleted" || normalized === "released") return "offline";
+  if (["creating", "rebooting", "restoring", "backingup", "migrating", "classchanging", "netmodifying"].includes(normalized)) {
+    return "maintenance";
+  }
   return "warning";
 };
 
 const formatUptimeFromCreatedAt = (createdAt: string, status: string) => {
-  if (status.trim().toLowerCase() !== "running") return "--";
+  if (getCloudServerStatus(status) !== "running") return "--";
   const created = new Date(createdAt);
   if (Number.isNaN(created.getTime())) return "--";
   const diffMs = Date.now() - created.getTime();
@@ -760,6 +883,17 @@ const formatMemorySpec = (memoryMb: number) => {
   return `${memoryMb}M`;
 };
 
+const formatStorageSpec = (storageGb?: number, storageType?: string) => {
+  const storageText = storageGb && storageGb > 0 ? `${storageGb}GB` : "存储未知";
+  return storageType?.trim() ? `${storageText} / ${storageType.trim()}` : storageText;
+};
+
+const formatRDSCpuSpec = (instance: AliyunRDSInstance) => {
+  if (instance.cpu && instance.cpu > 0) return `${instance.cpu}C`;
+  if (instance.cpuRaw?.trim()) return `${instance.cpuRaw.trim()}C`;
+  return "CPU未知";
+};
+
 const formatPercentValue = (value: number) => `${value.toFixed(2)}%`;
 
 const resolvePublicIp = (instance: AliyunInstance): Pick<CloudServer, "publicIp" | "publicIpType" | "publicIpId"> => {
@@ -774,26 +908,145 @@ const resolvePublicIp = (instance: AliyunInstance): Pick<CloudServer, "publicIp"
   return { publicIp: "-", publicIpType: "none", publicIpId: "" };
 };
 
-const publicIpLabel = (server: CloudServer) => (server.publicIpType === "eip" ? "弹性公网 IP" : "公网");
+const publicIpLabel = (server: CloudServer) => {
+  if (getResourceType(server) === "rds") return "连接地址";
+  return server.publicIpType === "eip" ? "弹性公网 IP" : "公网";
+};
 
-const metricSortLabels: Record<MetricSortKey, string> = {
+const isSpotServer = (source: { isSpot?: boolean; spotStrategy?: string }) => {
+  const spotStrategy = (source.spotStrategy ?? "").trim().toLowerCase();
+  return Boolean(source.isSpot) || (spotStrategy !== "" && spotStrategy !== "nospot");
+};
+
+const formatChargeType = (chargeType?: string, isSpot?: boolean) => {
+  if (isSpot) return "抢占式实例";
+  const normalized = (chargeType ?? "").trim().toLowerCase();
+  if (normalized === "prepaid") return "包年包月";
+  if (normalized === "postpaid") return "按量付费";
+  return chargeType?.trim() || "--";
+};
+
+const PLACEHOLDER_EXPIRATION_DAYS = 20 * 365;
+
+const isPlaceholderExpiration = (expiredAt?: string, expiresInDays?: number) => {
+  if (typeof expiresInDays === "number" && expiresInDays >= PLACEHOLDER_EXPIRATION_DAYS) return true;
+  const date = new Date(expiredAt ?? "");
+  if (Number.isNaN(date.getTime())) return false;
+  if (date.getFullYear() >= 2099) return true;
+  const diffMs = date.getTime() - Date.now();
+  return diffMs > PLACEHOLDER_EXPIRATION_DAYS * 86_400_000;
+};
+
+const calculateExpiresInDays = (expiredAt?: string) => {
+  if (isPlaceholderExpiration(expiredAt)) return undefined;
+  const date = new Date(expiredAt ?? "");
+  if (Number.isNaN(date.getTime())) return undefined;
+  const diffMs = date.getTime() - Date.now();
+  if (diffMs <= 0) return 0;
+  return Math.floor(diffMs / 86_400_000);
+};
+
+const normalizeExpirationStatus = (
+  status?: string,
+  chargeType?: string,
+  isSpot?: boolean,
+  expiresInDays?: number
+): ExpirationStatus => {
+  if (status === "normal" || status === "expiring" || status === "expired" || status === "no_expiration" || status === "unknown") {
+    return status;
+  }
+  if (isSpot) return "no_expiration";
+  if ((chargeType ?? "").trim().toLowerCase() === "postpaid") return "no_expiration";
+  if (typeof expiresInDays === "number") {
+    if (expiresInDays <= 0) return "expired";
+    if (expiresInDays <= 30) return "expiring";
+    return "normal";
+  }
+  return "unknown";
+};
+
+const formatExpirationDate = (expiredAt?: string) => {
+  const date = new Date(expiredAt ?? "");
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+};
+
+const resolveExpirationInfo = (source: {
+  chargeType?: string;
+  isSpot?: boolean;
+  spotStrategy?: string;
+  expiredAt?: string;
+  expiresInDays?: number;
+  expirationStatus?: string;
+  expirationMessage?: string;
+  expirationText?: string;
+}) => {
+  const expiresInDays = typeof source.expiresInDays === "number" ? source.expiresInDays : calculateExpiresInDays(source.expiredAt);
+  const isSpot = isSpotServer(source);
+  const isPlaceholder = isPlaceholderExpiration(source.expiredAt, source.expiresInDays);
+  const status = isPlaceholder ? "no_expiration" : normalizeExpirationStatus(source.expirationStatus, source.chargeType, isSpot, expiresInDays);
+  const message = isPlaceholder ? "云厂商返回远期占位时间，视为无固定到期日" : source.expirationText || source.expirationMessage || "";
+  const chargeText = formatChargeType(source.chargeType, isSpot);
+  const text =
+    status === "expired"
+      ? "已到期"
+      : status === "no_expiration"
+        ? chargeText === "--" ? "无固定到期" : chargeText
+        : status === "unknown"
+          ? message || "未返回到期时间"
+          : typeof expiresInDays === "number" && expiresInDays === 0 && message
+            ? message
+            : typeof expiresInDays === "number"
+            ? `剩余 ${expiresInDays} 天`
+            : message || "未返回到期时间";
+  return {
+    status,
+    expiresInDays,
+    text,
+    dateText: formatExpirationDate(source.expiredAt),
+    chargeText,
+    message,
+  };
+};
+
+const metricSortLabels: Record<ServerSortKey, string> = {
   cpu: "CPU",
   memory: "内存",
   disk: "磁盘",
+  expiration: "到期",
+};
+
+const expirationSortValue = (server: CloudServer) => {
+  const expiration = resolveExpirationInfo(server);
+  if (typeof expiration.expiresInDays === "number" && expiration.status !== "no_expiration" && expiration.status !== "unknown") {
+    return { rank: 0, value: expiration.expiresInDays };
+  }
+  if (expiration.status === "no_expiration") return { rank: 1, value: Number.POSITIVE_INFINITY };
+  return { rank: 2, value: Number.POSITIVE_INFINITY };
 };
 
 const sortServersByMetric = (
   rows: CloudServer[],
-  metricSort: { key: MetricSortKey; direction: SortDirection } | null
+  metricSort: { key: ServerSortKey; direction: SortDirection } | null
 ) => {
   if (!metricSort) return rows;
   return [...rows].sort((left, right) => {
+    if (metricSort.key === "expiration") {
+      const leftExpiration = expirationSortValue(left);
+      const rightExpiration = expirationSortValue(right);
+      if (leftExpiration.rank !== rightExpiration.rank) return leftExpiration.rank - rightExpiration.rank;
+      const result = leftExpiration.value - rightExpiration.value;
+      if (result !== 0) return metricSort.direction === "asc" ? result : -result;
+      return left.name.localeCompare(right.name, "zh-CN");
+    }
     const result = left[metricSort.key] - right[metricSort.key];
-    return metricSort.direction === "asc" ? result : -result;
+    if (result !== 0) return metricSort.direction === "asc" ? result : -result;
+    return left.name.localeCompare(right.name, "zh-CN");
   });
 };
 
 const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
+  const provider = supportedAccountProviders.includes(account.provider) ? account.provider : "aliyun";
   const status = !account.enabled
     ? "disabled"
     : account.lastCheckStatus === "ok"
@@ -803,12 +1056,13 @@ const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
         : "syncing";
   return {
     id: String(account.id),
-    provider: "aliyun",
+    provider,
     name: account.name,
-    alias: `阿里云 / ${account.name}`,
+    alias: `${providerLabels[provider]} / ${account.name}`,
     uid: account.accessKeyIdMasked || "--",
     owner: "控制台配置",
-    env: account.enabled ? "ECS 监控" : "已停用",
+    scope: account.enabled ? (provider === "aliyun" ? "ECS/RDS 资源与指标" : "ECS 资源与指标") : "已停用",
+    projectId: account.projectId || "",
     status,
     lastSync: formatDisplayTime(account.lastCheckedAt),
     regions: account.regions ?? [],
@@ -820,8 +1074,9 @@ const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
 
 const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overview?: AliyunOverviewResponse): CloudServer => {
   const cpuSpec = instance.cpu > 0 ? `${instance.cpu}C` : "CPU未知";
-  const serverStatus = getAliyunStatus(instance.status);
+  const serverStatus = getCloudServerStatus(instance.status);
   const publicIpInfo = resolvePublicIp(instance);
+  const expiration = resolveExpirationInfo(instance);
   const cpuPoint = latestPoint(overview?.metrics?.cpu?.points);
   const memoryPoint = latestPoint(overview?.metrics?.memory?.points);
   const diskPoint = latestPoint(overview?.metrics?.disk?.points);
@@ -838,22 +1093,139 @@ const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overvi
   return {
     id: `${account.id}:${instance.id}`,
     accountId: account.id,
-    provider: "aliyun",
+    provider: account.provider,
     region: instance.regionId || "--",
     zone: instance.zoneId || "--",
     instanceId: instance.id,
     name: instance.name || instance.hostName || instance.id,
-    business: "阿里云 ECS",
+    business: `${providerLabels[account.provider]} ECS`,
     ...publicIpInfo,
     privateIp: instance.privateIps?.[0] ?? "-",
     os: instance.osName || instance.osType || "--",
     spec: `${cpuSpec}${formatMemorySpec(instance.memoryMb)}`,
+    chargeType: instance.chargeType || "",
+    isSpot: instance.isSpot,
+    spotStrategy: instance.spotStrategy || "",
+    expiredAt: instance.expiredAt || "",
+    expiresInDays: expiration.expiresInDays,
+    expirationStatus: expiration.status,
+    expirationText: expiration.text,
     status: serverStatus,
     agentStatus: cloudMonitorStatus,
     cpu: clampPercentMetric(cpuPoint?.value),
     memory: clampPercentMetric(memoryPoint?.value),
     disk: clampPercentMetric(diskPoint?.value),
     load: loadPoint ? loadPoint.value.toFixed(2) : "--",
+    uptime: formatUptimeFromCreatedAt(instance.createdAt, instance.status),
+    lastSeen,
+    alerts: 0,
+    files: 0,
+    ai: 0,
+    kb: 0,
+  };
+};
+
+const metricIdentity = (series?: AliyunMetricSeries) =>
+  [series?.metricName, series?.subKey, series?.label, series?.valueFormat]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+const latestRDSMetricValue = (overview: AliyunOverviewResponse | undefined, includes: string[], excludes: string[] = []) => {
+  const normalizedIncludes = includes.map((item) => item.toLowerCase());
+  const normalizedExcludes = excludes.map((item) => item.toLowerCase());
+  let selected: { series: AliyunMetricSeries; point: AliyunMetricPoint } | undefined;
+  for (const series of Object.values(overview?.metrics ?? {})) {
+    const identity = metricIdentity(series);
+    if (!normalizedIncludes.some((item) => identity.includes(item))) continue;
+    if (normalizedExcludes.some((item) => identity.includes(item))) continue;
+    const point = latestPoint(series?.points);
+    if (!point) continue;
+    if (!selected || point.timestamp > selected.point.timestamp) {
+      selected = { series, point };
+    }
+  }
+  return selected;
+};
+
+const resolveRDSStoragePercent = (overview: AliyunOverviewResponse | undefined, instance: AliyunRDSInstance) => {
+  const direct = latestRDSMetricValue(overview, ["diskusage", "storageusage", "spaceusage_percent"], ["iops", "mbps"]);
+  if (direct && (direct.series.unit?.includes("%") || direct.point.value <= 100)) {
+    return clampPercentMetric(direct.point.value);
+  }
+  const usedSpace = latestRDSMetricValue(overview, ["detailedspaceusage", "spaceusage"], ["iops", "mbps"]);
+  if (usedSpace && instance.storageGb && instance.storageGb > 0) {
+    const unit = usedSpace.series.unit?.toLowerCase() ?? "";
+    const usedMb = unit.includes("gb") ? usedSpace.point.value * 1024 : usedSpace.point.value;
+    return clampPercentMetric((usedMb / (instance.storageGb * 1024)) * 100);
+  }
+  return 0;
+};
+
+const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance, overview?: AliyunOverviewResponse): CloudServer => {
+  const serverStatus = getAliyunRDSStatus(instance.status);
+  const expiration = resolveExpirationInfo({
+    chargeType: instance.payType,
+    expiredAt: instance.expiredAt,
+    expiresInDays: instance.expiresInDays,
+    expirationStatus: instance.expirationStatus,
+    expirationMessage: instance.expirationMessage,
+  });
+  const freshness = resolveOverviewFreshness(overview);
+  const cpuMetric = latestRDSMetricValue(overview, ["cpu"], ["proxy"]);
+  const memoryMetric = latestRDSMetricValue(overview, ["mem", "memory"], ["proxy"]);
+  const qpsMetric = latestRDSMetricValue(overview, ["qps"]);
+  const primaryEndpoint = instance.endpoints?.find((endpoint) => endpoint.connectionString?.trim()) ?? instance.endpoints?.[0];
+  const connectionString = instance.connectionString?.trim() || primaryEndpoint?.connectionString?.trim() || "-";
+  const port = instance.port?.trim() || primaryEndpoint?.port?.trim() || "";
+  const storageText = formatStorageSpec(instance.storageGb, instance.storageType);
+  const classText = instance.class?.trim() || `${formatRDSCpuSpec(instance)}${formatMemorySpec(instance.memoryMb ?? 0)}`;
+  const lastSeen =
+    serverStatus === "offline"
+      ? "实例已离线，性能数据不可用"
+      : freshness.message || overview?.message || (overview?.availableMetricCount ? "RDS 性能数据已同步" : "等待 RDS 性能数据");
+  return {
+    id: `${account.id}:rds:${instance.id}`,
+    accountId: account.id,
+    provider: "aliyun",
+    resourceType: "rds",
+    region: instance.regionId || "--",
+    zone: instance.zoneId || "--",
+    instanceId: instance.id,
+    name: instance.name || instance.id,
+    business: `${instance.engine || "RDS"} 数据库`,
+    publicIp: port ? `${connectionString}:${port}` : connectionString,
+    publicIpType: "none",
+    publicIpId: "",
+    privateIp: instance.vpcId || primaryEndpoint?.ipAddress || "-",
+    os: [instance.engine, instance.engineVersion].filter(Boolean).join(" ") || "--",
+    spec: `${classText} / ${storageText}`,
+    chargeType: instance.payType || "",
+    expiredAt: instance.expiredAt || "",
+    expiresInDays: expiration.expiresInDays,
+    expirationStatus: expiration.status,
+    expirationText: expiration.text,
+    engine: instance.engine,
+    engineVersion: instance.engineVersion,
+    dbInstanceType: instance.type,
+    dbCategory: instance.category,
+    dbClass: instance.class,
+    dbStorageGb: instance.storageGb,
+    dbStorageType: instance.storageType,
+    dbConnectionString: connectionString,
+    dbPort: port,
+    dbMaxConnections: instance.maxConnections,
+    dbMaxIops: instance.maxIops,
+    dbMaxIombps: instance.maxIombps,
+    dbEndpointCount: instance.endpoints?.length ?? 0,
+    dbLockMode: instance.lockMode,
+    dbLockReason: instance.lockReason,
+    status: serverStatus,
+    agentStatus: serverStatus === "offline" ? "offline" : freshness.status,
+    cpu: clampPercentMetric(cpuMetric?.point.value),
+    memory: clampPercentMetric(memoryMetric?.point.value),
+    disk: resolveRDSStoragePercent(overview, instance),
+    load: qpsMetric ? qpsMetric.point.value.toFixed(2) : "--",
     uptime: formatUptimeFromCreatedAt(instance.createdAt, instance.status),
     lastSeen,
     alerts: 0,
@@ -950,6 +1322,7 @@ const mergeServerRowsWithPrevious = (
   return freshRows.map((server) => {
     const previous = previousMap.get(server.id);
     if (!previous || server.status === "offline") return server;
+    if (getResourceType(server) === "rds") return server;
 
     const metrics = overviewMap[server.id]?.metrics ?? {};
     const next = { ...server };
@@ -1117,6 +1490,8 @@ const metricSourceLabel = (series?: AliyunMetricSeries) => {
   if (metricName.startsWith("ecs.DescribeInstanceMonitorData.")) return "ECS 基础监控";
   if (metricName.startsWith("VPC_PublicIP_")) return "弹性公网 IP 云监控";
   if (namespace === "acs_ecs_dashboard") return "云监控 ECS 指标";
+  if (namespace === "SYS.ECS") return "华为云 CES ECS 指标";
+  if (namespace === "AGT.ECS") return "华为云 Agent 指标";
   return namespace || "未知来源";
 };
 
@@ -1181,7 +1556,97 @@ const buildMetricNote = (
   if (derivedMetricKeys.has(item.key)) return "依赖的入/出方向指标没有同时返回";
   if (pluginMetricKeys.has(item.key)) return "ECS 基础监控不包含该项，需云监控插件或 Agent 上报";
   if (series) return `${source}${metricName}${period}，接口返回成功但没有采样点`;
-  return "阿里云未返回该指标";
+  return "云厂商未返回该指标";
+};
+
+const formatRDSMetricValue = (series: AliyunMetricSeries | undefined, value: number) => {
+  const unit = series?.unit?.trim() ?? "";
+  const unitLower = unit.toLowerCase();
+  if (unit.includes("%")) return formatPercentValue(value);
+  if (unitLower === "kb" || unitLower === "kbyte") return `${(value / 1024).toFixed(2)} MB`;
+  if (unitLower === "mb" || unitLower === "mbyte") return `${value.toFixed(2)} MB`;
+  if (unitLower === "gb" || unitLower === "gbyte") return `${value.toFixed(2)} GB`;
+  if (unitLower.includes("kbps")) return `${value.toFixed(2)} KB/s`;
+  if (unitLower.includes("mbps")) return `${value.toFixed(2)} MB/s`;
+  if (unitLower.includes("second") && /qps|tps|iops|cps/i.test(`${series?.metricName ?? ""} ${series?.subKey ?? ""}`)) {
+    return `${value.toFixed(2)}/s`;
+  }
+  if (!unit || unit === "Count") return value.toFixed(2);
+  return `${value.toFixed(2)} ${unit}`;
+};
+
+const formatRDSMetricDelta = (series: AliyunMetricSeries | undefined, value: number) => {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}${formatRDSMetricValue(series, Math.abs(value))}`;
+};
+
+const buildRDSMetricTrend = (series: AliyunMetricSeries | undefined, points?: AliyunMetricPoint[]) => {
+  const recentPoints = recentMetricPoints(points);
+  if (!recentPoints.length) return "--";
+  if (recentPoints.length === 1) return "单点采样";
+  const first = recentPoints[0];
+  const latest = recentPoints.at(-1);
+  if (!first || !latest) return "--";
+  const delta = latest.value - first.value;
+  if (Math.abs(delta) < 0.0001) return "近窗基本持平";
+  return `${delta > 0 ? "上升" : "下降"} ${formatRDSMetricDelta(series, delta)}`;
+};
+
+const buildRDSRecentSamples = (series: AliyunMetricSeries | undefined, points?: AliyunMetricPoint[]) =>
+  recentMetricPoints(points, 6).map((point) => `${formatMetricShortTime(point.timestamp)} ${formatRDSMetricValue(series, point.value)}`);
+
+const buildRDSMetricNote = (series: AliyunMetricSeries | undefined, latest: AliyunMetricPoint | undefined, error?: string) => {
+  if (error) return error;
+  const key = series?.metricName ?? "未知指标";
+  const subKey = series?.subKey ? ` / ${series.subKey}` : "";
+  const unit = series?.unit ? `，单位 ${series.unit}` : "";
+  const valueFormat = series?.valueFormat ? `，格式 ${series.valueFormat}` : "";
+  if (latest) return `RDS 性能参数 ${key}${subKey}${unit}${valueFormat}`;
+  return `RDS 性能参数 ${key}${subKey} 暂无采样点`;
+};
+
+const buildRDSMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => {
+  const rows = Object.entries(payload?.metrics ?? {})
+    .sort(([, left], [, right]) => `${left.metricName}.${left.subKey ?? ""}`.localeCompare(`${right.metricName}.${right.subKey ?? ""}`))
+    .map(([key, series]) => {
+      const points = series?.points ?? [];
+      const summary = summarizeMetricPoints(points);
+      const latest = summary?.latest;
+      return {
+        key,
+        label: series.label || [series.metricName, series.subKey].filter(Boolean).join(" / "),
+        unit: series.unit || "无单位",
+        value: latest ? formatRDSMetricValue(series, latest.value) : "--",
+        range: summary ? `${formatRDSMetricValue(series, summary.min)} ~ ${formatRDSMetricValue(series, summary.max)}` : "--",
+        average: summary ? formatRDSMetricValue(series, summary.average) : "--",
+        sampledAt: formatMetricTime(latest?.timestamp) || "--",
+        trend: buildRDSMetricTrend(series, points),
+        sparklinePoints: recentMetricPoints(points),
+        recentSamples: buildRDSRecentSamples(series, points),
+        points: points.length,
+        status: latest ? "ok" : "empty",
+        note: buildRDSMetricNote(series, latest),
+      } satisfies MonitorMetric;
+    });
+  const existingMetricNames = new Set(rows.map((row) => String(row.key).split(".")[0]));
+  const errorRows = Object.entries(payload?.errors ?? {})
+    .filter(([key]) => !existingMetricNames.has(key))
+    .map(([key, error]) => ({
+      key,
+      label: key,
+      unit: "无单位",
+      value: "--",
+      range: "--",
+      average: "--",
+      sampledAt: "--",
+      trend: "--",
+      sparklinePoints: [],
+      recentSamples: [],
+      points: 0,
+      status: "error" as const,
+      note: buildRDSMetricNote(undefined, undefined, error),
+    }));
+  return [...rows, ...errorRows];
 };
 
 const buildMonitorRows = (payload?: AliyunOverviewResponse): MonitorMetric[] => {
@@ -1249,14 +1714,14 @@ const formatDisplayTime = (raw?: string) => {
   return date.toLocaleString("zh-CN", { hour12: false });
 };
 
-const getStatusClass = (status: ServerStatus | AgentStatus | AccountStatus | OperationEvent["level"] | SyncTask["status"]) => {
+const getStatusClass = (status: string) => {
   if (status === "running" || status === "online" || status === "normal" || status === "info" || status === "完成") {
     return "ok";
   }
-  if (status === "warning" || status === "stale" || status === "syncing" || status === "执行中" || status === "等待") {
+  if (status === "warning" || status === "stale" || status === "syncing" || status === "expiring" || status === "执行中" || status === "等待") {
     return "warn";
   }
-  if (status === "maintenance" || status === "disabled") {
+  if (status === "maintenance" || status === "disabled" || status === "no_expiration" || status === "unknown") {
     return "muted";
   }
   return "bad";
@@ -1265,7 +1730,7 @@ const getStatusClass = (status: ServerStatus | AgentStatus | AccountStatus | Ope
 const getPageTitle = (page: PageKey) => menuGroups.flatMap((group) => group.items).find((item) => item.key === page)?.label ?? "";
 
 function StatusText({ children, status }: { children: string; status: string }) {
-  return <span className={`status-text ${getStatusClass(status as ServerStatus)}`}>{children}</span>;
+  return <span className={`status-text ${getStatusClass(status)}`}>{children}</span>;
 }
 
 function Utilization({ value }: { value: number }) {
@@ -1315,9 +1780,10 @@ export function CloudResourceConsole() {
   const [editingAccountId, setEditingAccountId] = useState("");
   const [accountSaving, setAccountSaving] = useState(false);
   const [testingAccountId, setTestingAccountId] = useState("");
+  const [togglingAccountId, setTogglingAccountId] = useState("");
   const [accountNotice, setAccountNotice] = useState("");
   const [expandedTree, setExpandedTree] = useState<Record<string, boolean>>({});
-  const [metricSort, setMetricSort] = useState<{ key: MetricSortKey; direction: SortDirection } | null>(null);
+  const [metricSort, setMetricSort] = useState<{ key: ServerSortKey; direction: SortDirection } | null>(null);
   const assetLoadingRef = useRef(false);
 
   useEffect(() => {
@@ -1331,13 +1797,13 @@ export function CloudResourceConsole() {
   }, [theme]);
 
   const loadCloudAssets = async (options: { silent?: boolean } = {}) => {
-    if (assetLoadingRef.current) return;
+    if (assetLoadingRef.current) return false;
     assetLoadingRef.current = true;
     if (USE_MOCK) {
       setAssetLoading(false);
       setLastSyncAt("示例模式");
       assetLoadingRef.current = false;
-      return;
+      return true;
     }
     if (!options.silent) setAssetLoading(true);
     setAssetError("");
@@ -1358,7 +1824,7 @@ export function CloudResourceConsole() {
         setOverviewByServerId({});
         setSelectedServerId("");
         setLastSyncAt("等待配置云账号");
-        return;
+        return true;
       }
 
       const overviewMap: Record<string, AliyunOverviewResponse> = {};
@@ -1367,33 +1833,69 @@ export function CloudResourceConsole() {
         mappedAccounts
           .filter((account) => account.enabled !== false)
           .map(async (account) => {
-            const resp = await fetch(`${API_BASE}/api/cloud/aliyun/instances?accountId=${encodeURIComponent(account.id)}`, {
-              cache: "no-store",
-              headers: buildApiHeaders(),
+            const providerPath = encodeURIComponent(account.provider);
+            const loadECSRows = async () => {
+              const resp = await fetch(`${API_BASE}/api/cloud/${providerPath}/instances?accountId=${encodeURIComponent(account.id)}`, {
+                cache: "no-store",
+                headers: buildApiHeaders(),
+              });
+              const payload = (await resp.json().catch(() => ({}))) as AliyunInstancesResponse;
+              if (!resp.ok) {
+                throw new Error(`${account.name}: ${payload.error || `ECS 接口返回 ${resp.status}`}`);
+              }
+              const instances = payload.items ?? [];
+              return Promise.all(
+                instances.map(async (instance) => {
+                  const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
+                  const overviewResp = await fetch(
+                    `${API_BASE}/api/cloud/${providerPath}/overview?accountId=${encodeURIComponent(account.id)}&instanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}&publicIp=${encodeURIComponent(publicIp)}`,
+                    { cache: "no-store", headers: buildApiHeaders() }
+                  );
+                  const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
+                  const server = mapAliyunServer(account, instance, overviewResp.ok ? overview : undefined);
+                  if (overviewResp.ok) {
+                    overviewMap[server.id] = overview;
+                  } else {
+                    overviewMap[server.id] = { ok: false, error: overview.error || "ECS 监控数据读取失败" };
+                  }
+                  return server;
+                })
+              );
+            };
+            const loadRDSRows = async () => {
+              const resp = await fetch(`${API_BASE}/api/cloud/aliyun/rds/instances?accountId=${encodeURIComponent(account.id)}`, {
+                cache: "no-store",
+                headers: buildApiHeaders(),
+              });
+              const payload = (await resp.json().catch(() => ({}))) as AliyunRDSInstancesResponse;
+              if (!resp.ok) {
+                throw new Error(`${account.name}: ${payload.error || `RDS 接口返回 ${resp.status}`}`);
+              }
+              const instances = payload.items ?? [];
+              return Promise.all(
+                instances.map(async (instance) => {
+                  const overviewResp = await fetch(
+                    `${API_BASE}/api/cloud/aliyun/rds/overview?accountId=${encodeURIComponent(account.id)}&dbInstanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&engine=${encodeURIComponent(instance.engine || "")}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}`,
+                    { cache: "no-store", headers: buildApiHeaders() }
+                  );
+                  const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
+                  const server = mapAliyunRDSResource(account, instance, overviewResp.ok ? overview : undefined);
+                  if (overviewResp.ok) {
+                    overviewMap[server.id] = overview;
+                  } else {
+                    overviewMap[server.id] = { ok: false, resource: "rds", error: overview.error || "RDS 性能数据读取失败" };
+                  }
+                  return server;
+                })
+              );
+            };
+            const resourceLoaders = account.provider === "aliyun" ? [loadECSRows(), loadRDSRows()] : [loadECSRows()];
+            const resourceResults = await Promise.allSettled(resourceLoaders);
+            return resourceResults.flatMap((result) => {
+              if (result.status === "fulfilled") return result.value;
+              errors.push(result.reason instanceof Error ? result.reason.message : `${account.name}: 云资源同步失败`);
+              return [];
             });
-            const payload = (await resp.json().catch(() => ({}))) as AliyunInstancesResponse;
-            if (!resp.ok) {
-              throw new Error(`${account.name}: ${payload.error || `ECS 接口返回 ${resp.status}`}`);
-            }
-            const instances = payload.items ?? [];
-            const rows = await Promise.all(
-              instances.map(async (instance) => {
-                const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
-                const overviewResp = await fetch(
-                  `${API_BASE}/api/cloud/aliyun/overview?accountId=${encodeURIComponent(account.id)}&instanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}&publicIp=${encodeURIComponent(publicIp)}`,
-                  { cache: "no-store", headers: buildApiHeaders() }
-                );
-                const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
-                const server = mapAliyunServer(account, instance, overviewResp.ok ? overview : undefined);
-                if (overviewResp.ok) {
-                  overviewMap[server.id] = overview;
-                } else {
-                  overviewMap[server.id] = { ok: false, error: overview.error || "监控数据读取失败" };
-                }
-                return server;
-              })
-            );
-            return rows;
           })
       );
       const rows = accountResults.flatMap((result) => {
@@ -1408,12 +1910,20 @@ export function CloudResourceConsole() {
       if (errors.length) {
         setAssetError(errors.join("；"));
       }
+      return errors.length === 0;
     } catch (error) {
       setAssetError(error instanceof Error ? error.message : "云资源同步失败");
+      return false;
     } finally {
       assetLoadingRef.current = false;
       if (!options.silent) setAssetLoading(false);
     }
+  };
+
+  const refreshAccountsAndResources = async () => {
+    setAccountNotice("正在刷新账号列表、ECS/RDS 实例和监控概览");
+    const ok = await loadCloudAssets();
+    setAccountNotice(ok ? "账号列表、ECS/RDS 实例和监控概览已刷新" : "刷新未完成，请查看页面顶部的云资源同步提示");
   };
 
   const saveAccount = async () => {
@@ -1437,13 +1947,13 @@ export function CloudResourceConsole() {
         method: editingAccountId ? "PUT" : "POST",
         headers: buildApiHeaders(true),
         body: JSON.stringify({
-          provider: "aliyun",
+          provider: accountForm.provider,
           name: accountForm.name.trim(),
           accessKeyId: accountForm.accessKeyId.trim(),
           accessKeySecret: accountForm.accessKeySecret.trim(),
+          projectId: accountForm.projectId.trim(),
           regions,
           metricPeriod: accountForm.metricPeriod.trim() || "60",
-          enabled: accountForm.enabled,
         }),
       });
       const payload = (await resp.json().catch(() => ({}))) as { error?: string };
@@ -1507,16 +2017,58 @@ export function CloudResourceConsole() {
     }
   };
 
+  const toggleAccountEnabled = async (account: CloudAccount) => {
+    const nextEnabled = account.enabled === false;
+    if (USE_MOCK) {
+      setAccounts((current) =>
+        current.map((item) =>
+          item.id === account.id
+            ? {
+                ...item,
+                enabled: nextEnabled,
+                scope: nextEnabled ? "ECS/RDS 资源与指标" : "已停用",
+                status: nextEnabled ? "normal" : "disabled",
+              }
+            : item
+        )
+      );
+      setAccountNotice(nextEnabled ? "示例账号已启用" : "示例账号已停用");
+      return;
+    }
+    setTogglingAccountId(account.id);
+    setAccountNotice("");
+    try {
+      const resp = await fetch(`${API_BASE}/api/cloud/accounts/${encodeURIComponent(account.id)}`, {
+        method: "PUT",
+        headers: buildApiHeaders(true),
+        body: JSON.stringify({
+          provider: account.provider,
+          enabled: nextEnabled,
+        }),
+      });
+      const payload = (await resp.json().catch(() => ({}))) as { error?: string };
+      if (!resp.ok) {
+        throw new Error(payload.error || `更新云账号状态失败 ${resp.status}`);
+      }
+      setAccountNotice(nextEnabled ? "账号已启用，后续刷新会同步该账号资源" : "账号已停用，后续刷新会跳过该账号资源");
+      await loadCloudAssets();
+    } catch (error) {
+      setAccountNotice(error instanceof Error ? error.message : "更新云账号状态失败");
+    } finally {
+      setTogglingAccountId("");
+    }
+  };
+
   const editAccount = (account: CloudAccount) => {
     setEditingAccountId(account.id);
     setAccountForm({
-      providerName: providerLabels[account.provider] ?? "阿里云 ECS",
+      provider: account.provider,
       name: account.name,
       accessKeyId: "",
       accessKeySecret: "",
+      projectId: account.projectId || "",
       regions: account.regions.join(","),
       metricPeriod: account.metricPeriod || "60",
-      enabled: account.enabled !== false,
     });
     setAccountNotice("编辑模式下 AccessKey 留空表示沿用原值");
   };
@@ -1528,7 +2080,20 @@ export function CloudResourceConsole() {
   };
 
   const updateAccountForm = <K extends keyof CloudAccountForm>(key: K, value: CloudAccountForm[K]) => {
-    setAccountForm((current) => ({ ...current, [key]: value }));
+    setAccountForm((current) => {
+      if (key === "provider") {
+        const nextProvider = value as Provider;
+        const currentDefaultRegion = defaultAccountRegions[current.provider];
+        const shouldReplaceRegions = !current.regions.trim() || current.regions.trim() === currentDefaultRegion;
+        return {
+          ...current,
+          provider: nextProvider,
+          projectId: nextProvider === "huawei" ? current.projectId : "",
+          regions: shouldReplaceRegions ? defaultAccountRegions[nextProvider] : current.regions,
+        };
+      }
+      return { ...current, [key]: value };
+    });
   };
 
   const isTreeExpanded = (key: string) => expandedTree[key] !== false;
@@ -1537,7 +2102,7 @@ export function CloudResourceConsole() {
     setExpandedTree((current) => ({ ...current, [key]: current[key] === false }));
   };
 
-  const toggleMetricSort = (key: MetricSortKey) => {
+  const toggleMetricSort = (key: ServerSortKey) => {
     setMetricSort((current) => {
       if (current?.key !== key) return { key, direction: "desc" };
       return { key, direction: current.direction === "desc" ? "asc" : "desc" };
@@ -1582,6 +2147,9 @@ export function CloudResourceConsole() {
         server.zone,
         server.publicIp,
         server.privateIp,
+        server.expiredAt,
+        server.expirationText,
+        resolveExpirationInfo(server).text,
         account?.name,
         account?.alias,
         providerLabels[server.provider],
@@ -1605,9 +2173,18 @@ export function CloudResourceConsole() {
   const summary = useMemo(() => {
     const warningServers = servers.filter((server) => server.status === "warning" || server.status === "offline").length;
     const agentIssues = servers.filter((server) => server.agentStatus !== "online").length;
-    const alertCount = servers.reduce((total, server) => total + server.alerts, 0);
-    const fileCount = servers.reduce((total, server) => total + server.files, 0);
-    return { warningServers, agentIssues, alertCount, fileCount };
+    const ecsCount = servers.filter((server) => getResourceType(server) === "ecs").length;
+    const rdsCount = servers.filter((server) => getResourceType(server) === "rds").length;
+    return { warningServers, agentIssues, ecsCount, rdsCount };
+  }, [servers]);
+
+  const expirationSummary = useMemo(() => {
+    let expiring = 0;
+    servers.forEach((server) => {
+      const status = resolveExpirationInfo(server).status;
+      if (status === "expiring") expiring += 1;
+    });
+    return { expiring };
   }, [servers]);
 
   const regionRows = useMemo(() => {
@@ -1623,7 +2200,7 @@ export function CloudResourceConsole() {
     return [...map.values()];
   }, [servers]);
 
-  const renderMetricSortButton = (key: MetricSortKey) => {
+  const renderMetricSortButton = (key: ServerSortKey) => {
     const active = metricSort?.key === key;
     const directionText = active ? (metricSort.direction === "asc" ? "升序" : "降序") : "排序";
     return (
@@ -1651,10 +2228,11 @@ export function CloudResourceConsole() {
         <col className="usage-col" />
         <col className="usage-col" />
         <col className="monitor-col" />
+        <col className="expiration-col" />
       </colgroup>
       <thead>
         <tr>
-          <th>服务器</th>
+          <th>资源</th>
           <th>云平台 / 账号</th>
           <th>地域 / 可用区</th>
           <th>IP</th>
@@ -1662,12 +2240,22 @@ export function CloudResourceConsole() {
           <th>{renderMetricSortButton("cpu")}</th>
           <th>{renderMetricSortButton("memory")}</th>
           <th>{renderMetricSortButton("disk")}</th>
-          <th>云监控</th>
+          <th>监控</th>
+          <th>{renderMetricSortButton("expiration")}</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((server) => {
           const account = getAccount(server.accountId);
+          const resourceType = getResourceType(server);
+          const expiration = resolveExpirationInfo(server);
+          const expirationSubText = expiration.dateText
+            ? `到期 ${expiration.dateText}`
+            : expiration.status === "no_expiration"
+              ? "无固定到期"
+              : expiration.status === "unknown"
+                ? "待云厂商返回"
+                : expiration.chargeText;
           return (
             <tr
               className={selectedServer.id === server.id ? "selected" : ""}
@@ -1677,7 +2265,7 @@ export function CloudResourceConsole() {
               <td className="server-name-cell">
                 <strong>{server.name}</strong>
                 <span>{server.instanceId}</span>
-                <span>{server.business}</span>
+                <span>{resourceTypeLabels[resourceType]} / {server.business}</span>
               </td>
               <td className="account-cell">
                 <strong>{providerLabels[server.provider]}</strong>
@@ -1690,7 +2278,7 @@ export function CloudResourceConsole() {
               <td className="ip-cell">
                 <span>{publicIpLabel(server)}：{server.publicIp}</span>
                 {server.publicIpType === "eip" && server.publicIpId ? <span>EIP ID：{server.publicIpId}</span> : null}
-                <span>内网：{server.privateIp}</span>
+                <span>{resourceType === "rds" ? "VPC / 地址" : "内网"}：{server.privateIp}</span>
               </td>
               <td>
                 <StatusText status={server.status}>{serverStatusLabels[server.status]}</StatusText>
@@ -1701,12 +2289,16 @@ export function CloudResourceConsole() {
               <td className="monitor-cell" title={`${agentStatusLabels[server.agentStatus]} / ${server.lastSeen}`}>
                 <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
               </td>
+              <td className="expiration-cell" title={expiration.dateText ? `${expiration.text}，到期日 ${expiration.dateText}` : expiration.message || expiration.text}>
+                <StatusText status={expiration.status}>{expiration.text}</StatusText>
+                <span>{expirationSubText}</span>
+              </td>
             </tr>
           );
         })}
         {!rows.length ? (
           <tr>
-            <td className="empty-cell" colSpan={9}>当前筛选条件下没有服务器</td>
+            <td className="empty-cell" colSpan={10}>当前筛选条件下没有云资源</td>
           </tr>
         ) : null}
       </tbody>
@@ -1810,12 +2402,18 @@ export function CloudResourceConsole() {
     </aside>
   );
 
-  const renderServersPage = () => (
+  const renderServersPage = () => {
+    const selectedExpiration = resolveExpirationInfo(selectedServer);
+    const selectedResourceType = getResourceType(selectedServer);
+    const selectedExpirationDetail = selectedExpiration.dateText
+      ? `${selectedExpiration.text} / 到期 ${selectedExpiration.dateText}`
+      : selectedExpiration.message || selectedExpiration.text;
+    return (
     <div className="asset-page">
       {renderScopeTree()}
       <section className="page-main-section">
         <div className="toolbar">
-          <input value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="搜索服务器、账号、IP、业务或地域" />
+          <input value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="搜索资源、账号、IP、业务或地域" />
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.currentTarget.value as ServerStatus | "all")}>
             <option value="all">全部状态</option>
             <option value="running">运行中</option>
@@ -1831,16 +2429,16 @@ export function CloudResourceConsole() {
             <option value="offline">离线</option>
           </select>
           <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>{assetLoading ? "同步中" : "同步资产"}</button>
-          <button type="button">导出</button>
         </div>
 
         <div className="simple-summary">
           <span>云账号：{accounts.length}</span>
-          <span>服务器：{servers.length}</span>
-          <span>异常服务器：{summary.warningServers}</span>
-          <span>云监控异常：{summary.agentIssues}</span>
-          <span>今日文件入云：{summary.fileCount}</span>
-          <span>待关注告警：{summary.alertCount}</span>
+          <span>资源：{servers.length}</span>
+          <span>ECS：{summary.ecsCount}</span>
+          <span>RDS：{summary.rdsCount}</span>
+          <span>异常资源：{summary.warningServers}</span>
+          <span>监控异常：{summary.agentIssues}</span>
+          <span>到期关注：{expirationSummary.expiring}（30 天内）</span>
           <span>云资源同步：{assetLoading ? "同步中" : assetError ? `异常：${assetError}` : `${lastSyncAt}，自动刷新 30 秒`}</span>
         </div>
 
@@ -1848,27 +2446,124 @@ export function CloudResourceConsole() {
 
         <section className="detail-panel">
           <div className="section-title">
-            <h3>服务器详情</h3>
-            <span>选择表格中的服务器后在这里查看基础信息和闭环状态</span>
+            <h3>资源详情</h3>
+            <span>选择表格中的云资源后在这里查看基础信息和监控状态</span>
           </div>
           <table className="detail-table">
             <tbody>
-              <tr><th>服务器</th><td>{selectedServer.name}</td><th>实例 ID</th><td>{selectedServer.instanceId}</td></tr>
+              <tr><th>资源</th><td>{selectedServer.name}</td><th>实例 ID</th><td>{selectedServer.instanceId}</td></tr>
               <tr><th>云平台</th><td>{providerLabels[selectedServer.provider]}</td><th>账号</th><td>{selectedAccount?.name ?? "--"}</td></tr>
+              <tr><th>资源类型</th><td>{resourceTypeLabels[selectedResourceType]}</td><th>业务分类</th><td>{selectedServer.business}</td></tr>
               <tr><th>地域</th><td>{selectedServer.region}</td><th>可用区</th><td>{selectedServer.zone}</td></tr>
-              <tr><th>{publicIpLabel(selectedServer)}</th><td>{selectedServer.publicIp}{selectedServer.publicIpId ? ` / ${selectedServer.publicIpId}` : ""}</td><th>内网 IP</th><td>{selectedServer.privateIp}</td></tr>
-              <tr><th>系统</th><td>{selectedServer.os}</td><th>规格</th><td>{selectedServer.spec}</td></tr>
-              <tr><th>运行状态</th><td>{serverStatusLabels[selectedServer.status]}</td><th>云监控</th><td>{agentStatusLabels[selectedServer.agentStatus]} / {selectedServer.lastSeen}</td></tr>
-              <tr><th>负载</th><td>{selectedServer.load}</td><th>运行时长</th><td>{selectedServer.uptime}</td></tr>
+              <tr><th>{publicIpLabel(selectedServer)}</th><td>{selectedServer.publicIp}{selectedServer.publicIpId ? ` / ${selectedServer.publicIpId}` : ""}</td><th>{selectedResourceType === "rds" ? "VPC / 地址" : "内网 IP"}</th><td>{selectedServer.privateIp}</td></tr>
+              <tr><th>{selectedResourceType === "rds" ? "引擎" : "系统"}</th><td>{selectedServer.os}</td><th>规格</th><td>{selectedServer.spec}</td></tr>
+              {selectedResourceType === "rds" ? (
+                <>
+                  <tr><th>RDS 类型</th><td>{selectedServer.dbInstanceType || "--"}</td><th>系列 / 存储</th><td>{[selectedServer.dbCategory, selectedServer.dbStorageType].filter(Boolean).join(" / ") || "--"}</td></tr>
+                  <tr><th>连接端点</th><td>{selectedServer.dbEndpointCount ?? 0} 个</td><th>性能上限</th><td>{`连接 ${selectedServer.dbMaxConnections || "--"} / IOPS ${selectedServer.dbMaxIops || "--"} / MBPS ${selectedServer.dbMaxIombps || "--"}`}</td></tr>
+                  <tr><th>锁定状态</th><td>{selectedServer.dbLockMode || "--"}</td><th>锁定原因</th><td>{selectedServer.dbLockReason || "--"}</td></tr>
+                </>
+              ) : null}
+              <tr><th>计费方式</th><td>{formatChargeType(selectedServer.chargeType, isSpotServer(selectedServer))}</td><th>到期状态</th><td>{selectedExpirationDetail}</td></tr>
+              <tr><th>运行状态</th><td>{serverStatusLabels[selectedServer.status]}</td><th>{selectedResourceType === "rds" ? "性能采样" : "云监控"}</th><td>{agentStatusLabels[selectedServer.agentStatus]} / {selectedServer.lastSeen}</td></tr>
+              <tr><th>{selectedResourceType === "rds" ? "QPS" : "负载"}</th><td>{selectedServer.load}</td><th>运行时长</th><td>{selectedServer.uptime}</td></tr>
             </tbody>
           </table>
         </section>
       </section>
     </div>
-  );
+    );
+  };
 
   const renderAccountsPage = () => (
     <section className="page-main-section">
+      <div className="account-list-panel">
+        <div className="section-title account-list-title">
+          <div>
+            <h3>已接入云平台账号</h3>
+            <span>展示当前保存的云账号；刷新会重新读取账号列表、ECS/RDS 实例和监控概览</span>
+          </div>
+          <div className="account-title-actions">
+            <small>{assetLoading ? "刷新中" : `最近刷新 ${lastSyncAt}`}</small>
+            <button type="button" onClick={() => void refreshAccountsAndResources()} disabled={assetLoading}>
+              {assetLoading ? "刷新中" : "刷新账号资源"}
+            </button>
+          </div>
+        </div>
+        {accountNotice ? <div className="inline-message">{accountNotice}</div> : null}
+        <div className="table-panel account-table-panel">
+          <table className="data-table account-table">
+            <colgroup>
+              <col className="account-provider-col" />
+              <col className="account-name-col" />
+              <col className="account-id-col" />
+              <col className="account-source-col" />
+              <col className="account-scope-col" />
+              <col className="account-regions-col" />
+              <col className="account-server-col" />
+              <col className="account-status-col" />
+              <col className="account-sync-col" />
+              <col className="account-actions-col" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>云平台</th>
+                <th>账号名称</th>
+                <th>账号标识</th>
+                <th>来源</th>
+                <th>接入范围</th>
+                <th>地域</th>
+                <th>资源</th>
+                <th>状态</th>
+                <th>最近同步</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((account) => {
+                const isDisabled = account.enabled === false;
+                const isToggling = togglingAccountId === account.id;
+                return (
+                  <tr key={account.id}>
+                    <td>{providerLabels[account.provider]}</td>
+                    <td><strong>{account.name}</strong><span>{account.checkMessage || account.alias}</span></td>
+                    <td>{account.uid}</td>
+                    <td>{account.owner}</td>
+                    <td>{account.scope}</td>
+                    <td>{account.regions.join("、")}</td>
+                    <td>{servers.filter((server) => server.accountId === account.id).length}</td>
+                    <td><StatusText status={account.status}>{accountStatusLabels[account.status]}</StatusText></td>
+                    <td>{account.lastSync}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className={isDisabled ? "link-button state-button enable" : "link-button state-button"}
+                          type="button"
+                          onClick={() => void toggleAccountEnabled(account)}
+                          disabled={isToggling}
+                        >
+                          {isToggling ? "处理中" : isDisabled ? "启用" : "停用"}
+                        </button>
+                        <button className="link-button" type="button" onClick={() => void testAccount(account.id)} disabled={testingAccountId === account.id || isDisabled}>
+                          {testingAccountId === account.id ? "校验中" : "校验"}
+                        </button>
+                        <button className="link-button" type="button" onClick={() => editAccount(account)}>编辑</button>
+                        <button className="link-button danger" type="button" onClick={() => void deleteAccount(account.id)}>删除</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!accounts.length ? (
+                <tr>
+                  <td className="empty-cell" colSpan={10}>还没有云账号，先在下方新增一个阿里云 ECS/RDS 账号</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="account-config-panel">
         <div className="section-title">
           <h3>{editingAccountId ? "编辑云平台账号" : "新增云平台账号"}</h3>
@@ -1877,7 +2572,11 @@ export function CloudResourceConsole() {
         <div className="account-form">
           <label>
             <span>云平台</span>
-            <input value={accountForm.providerName} onChange={(event) => updateAccountForm("providerName", event.currentTarget.value)} placeholder="阿里云 ECS" />
+            <select value={accountForm.provider} onChange={(event) => updateAccountForm("provider", event.currentTarget.value as Provider)}>
+              {supportedAccountProviders.map((provider) => (
+                <option key={provider} value={provider}>{providerLabels[provider]}</option>
+              ))}
+            </select>
           </label>
           <label>
             <span>账号名称</span>
@@ -1891,6 +2590,12 @@ export function CloudResourceConsole() {
             <span>AccessKey Secret</span>
             <input type="password" value={accountForm.accessKeySecret} onChange={(event) => updateAccountForm("accessKeySecret", event.currentTarget.value)} placeholder={editingAccountId ? "留空沿用原值" : "AccessKey Secret"} />
           </label>
+          {accountForm.provider === "huawei" ? (
+            <label>
+              <span>Project ID</span>
+              <input value={accountForm.projectId} onChange={(event) => updateAccountForm("projectId", event.currentTarget.value)} placeholder="可选，多个项目时填写" />
+            </label>
+          ) : null}
           <label>
             <span>地域</span>
             <input value={accountForm.regions} onChange={(event) => updateAccountForm("regions", event.currentTarget.value)} placeholder="cn-hangzhou,cn-shanghai" />
@@ -1899,13 +2604,6 @@ export function CloudResourceConsole() {
             <span>采样周期（秒）</span>
             <input value={accountForm.metricPeriod} onChange={(event) => updateAccountForm("metricPeriod", event.currentTarget.value)} placeholder="60" />
           </label>
-          <label>
-            <span>账号状态</span>
-            <select value={accountForm.enabled ? "enabled" : "disabled"} onChange={(event) => updateAccountForm("enabled", event.currentTarget.value === "enabled")}>
-              <option value="enabled">启用同步和展示</option>
-              <option value="disabled">停用</option>
-            </select>
-          </label>
           <div className="account-form-actions">
             <button type="button" onClick={() => void saveAccount()} disabled={accountSaving}>
               {accountSaving ? "保存中" : editingAccountId ? "更新账号" : "保存账号"}
@@ -1913,57 +2611,6 @@ export function CloudResourceConsole() {
             {editingAccountId ? <button type="button" onClick={cancelAccountEdit}>取消编辑</button> : null}
           </div>
         </div>
-        {accountNotice ? <div className="inline-message">{accountNotice}</div> : null}
-      </div>
-      <div className="toolbar">
-        <button type="button" onClick={() => void loadCloudAssets()}>同步全部账号</button>
-      </div>
-      <div className="table-panel">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>云平台</th>
-              <th>账号名称</th>
-              <th>账号标识</th>
-              <th>负责人</th>
-              <th>环境</th>
-              <th>地域</th>
-              <th>服务器</th>
-              <th>状态</th>
-              <th>最近同步</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map((account) => (
-              <tr key={account.id}>
-                <td>{providerLabels[account.provider]}</td>
-                <td><strong>{account.name}</strong><span>{account.checkMessage || account.alias}</span></td>
-                <td>{account.uid}</td>
-                <td>{account.owner}</td>
-                <td>{account.env}</td>
-                <td>{account.regions.join("、")}</td>
-                <td>{servers.filter((server) => server.accountId === account.id).length}</td>
-                <td><StatusText status={account.status}>{accountStatusLabels[account.status]}</StatusText></td>
-                <td>{account.lastSync}</td>
-                <td>
-                  <div className="row-actions">
-                    <button className="link-button" type="button" onClick={() => void testAccount(account.id)} disabled={testingAccountId === account.id}>
-                      {testingAccountId === account.id ? "校验中" : "校验"}
-                    </button>
-                    <button className="link-button" type="button" onClick={() => editAccount(account)}>编辑</button>
-                    <button className="link-button danger" type="button" onClick={() => void deleteAccount(account.id)}>删除</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!accounts.length ? (
-              <tr>
-                <td className="empty-cell" colSpan={10}>还没有云账号，先在上方新增一个阿里云 ECS 账号</td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
       </div>
     </section>
   );
@@ -1976,7 +2623,7 @@ export function CloudResourceConsole() {
             <tr>
               <th>云平台</th>
               <th>地域</th>
-              <th>服务器数</th>
+              <th>资源数</th>
               <th>异常数</th>
               <th>探针在线</th>
               <th>操作</th>
@@ -1993,7 +2640,7 @@ export function CloudResourceConsole() {
                 <td><button className="link-button" type="button" onClick={() => {
                   selectScope(buildScopeKey("region", `${row.provider}:${row.region}`));
                   setActivePage("servers");
-                }}>查看服务器</button></td>
+                }}>查看资源</button></td>
               </tr>
             ))}
           </tbody>
@@ -2004,7 +2651,8 @@ export function CloudResourceConsole() {
 
   const renderMonitorPage = () => {
     const overview = overviewByServerId[selectedServer.id];
-    const metricRows = buildMonitorRows(overview);
+    const isRDS = getResourceType(selectedServer) === "rds";
+    const metricRows = isRDS ? buildRDSMonitorRows(overview) : buildMonitorRows(overview);
     const freshness = resolveOverviewFreshness(overview);
     const snapshot = latestMetricSnapshot(overview);
     const freshnessSummary = snapshot.latestTimestamp
@@ -2015,49 +2663,83 @@ export function CloudResourceConsole() {
         <div className="table-panel">{renderServerTable(monitorServers)}</div>
         <section className="detail-panel">
           <div className="section-title">
-            <h3>ECS 监控详情</h3>
+            <h3>{isRDS ? "RDS 性能详情" : "ECS 监控详情"}</h3>
             <span>{selectedServer.name} / {selectedServer.instanceId}</span>
           </div>
           {freshnessSummary ? (
             <div className="inline-message">{freshnessSummary}</div>
           ) : null}
-          <table className="data-table">
-            <thead>
-              <tr>
+          <div className="monitor-detail-table-wrap">
+            <table className="data-table monitor-detail-table">
+              <colgroup>
+                <col className="monitor-metric-col" />
+                <col className="monitor-current-col" />
+                <col className="monitor-trend-col" />
+                <col className="monitor-samples-col" />
+                <col className="monitor-stats-col" />
+                <col className="monitor-meta-col" />
+                <col className="monitor-status-col" />
+              </colgroup>
+              <thead>
+                <tr>
                   <th>指标</th>
                   <th>当前值</th>
-                  <th>30 分钟范围</th>
-                  <th>均值</th>
                   <th>趋势</th>
                   <th>最近采样</th>
-                  <th>最新采样</th>
-                  <th>采样点数</th>
+                  <th>30 分钟统计</th>
+                  <th>采样</th>
                   <th>状态</th>
-                  <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              {metricRows.map((item) => (
-                <tr key={item.key}>
-                  <td>{item.label}</td>
-                  <td>{item.value}</td>
-                  <td>{item.range}</td>
-                  <td>{item.average}</td>
-                  <td className="metric-trend-cell">
-                    <MetricSparkline points={item.sparklinePoints} status={item.status} />
-                    <span>{item.trend}</span>
-                  </td>
-                  <td className="metric-samples-cell">
-                    {item.recentSamples.length ? item.recentSamples.map((sample) => <span key={`${item.key}-${sample}`}>{sample}</span>) : <span>--</span>}
-                  </td>
-                  <td>{item.sampledAt}</td>
-                  <td>{item.points}</td>
-                  <td><StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>{item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}</StatusText></td>
-                  <td>{item.note}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {metricRows.map((item) => (
+                  <Fragment key={item.key}>
+                    <tr className="monitor-metric-row">
+                      <td className="metric-name-cell">
+                        <strong>{item.label}</strong>
+                        <span>{item.unit || "无单位"}</span>
+                      </td>
+                      <td className="metric-current-cell">{item.value}</td>
+                      <td className="metric-trend-cell">
+                        <MetricSparkline points={item.sparklinePoints} status={item.status} />
+                        <span>{item.trend}</span>
+                      </td>
+                      <td className="metric-samples-cell">
+                        {item.recentSamples.length ? (
+                          item.recentSamples.map((sample) => (
+                            <span className="metric-sample-chip" key={`${item.key}-${sample}`}>{sample}</span>
+                          ))
+                        ) : (
+                          <span className="metric-sample-empty">--</span>
+                        )}
+                      </td>
+                      <td className="metric-range-cell">
+                        <strong>{item.range}</strong>
+                        <span>均值 {item.average}</span>
+                      </td>
+                      <td className="metric-sample-meta-cell">
+                        <strong>{item.sampledAt}</strong>
+                        <span>{item.points} 个点</span>
+                      </td>
+                      <td>
+                        <StatusText status={item.status === "ok" ? "normal" : item.status === "error" ? "warning" : "disabled"}>
+                          {item.status === "ok" ? "正常" : item.status === "error" ? "异常" : "暂无数据"}
+                        </StatusText>
+                      </td>
+                    </tr>
+                    <tr className={`monitor-note-row monitor-note-${item.status}`}>
+                      <td colSpan={7}>
+                        <div className="monitor-note" title={item.note}>
+                          <span>说明</span>
+                          <p>{item.note}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       </section>
     );
@@ -2065,22 +2747,14 @@ export function CloudResourceConsole() {
 
   const renderAgentsPage = () => (
     <section className="page-main-section">
-      <div className="toolbar">
-        <button type="button">生成安装命令</button>
-        <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>
-          {assetLoading ? "检查中" : "批量检查心跳"}
-        </button>
-      </div>
       <div className="table-panel">
         <table className="data-table">
           <thead>
             <tr>
-              <th>服务器</th>
+              <th>资源</th>
               <th>云账号</th>
-              <th>探针状态</th>
-              <th>最近心跳</th>
-              <th>文件入云</th>
-              <th>建议动作</th>
+              <th>监控状态</th>
+              <th>最近采样</th>
             </tr>
           </thead>
           <tbody>
@@ -2088,18 +2762,10 @@ export function CloudResourceConsole() {
               const account = getAccount(server.accountId);
               return (
                 <tr key={server.id}>
-                  <td><strong>{server.name}</strong><span>{server.privateIp}</span></td>
+                  <td><strong>{server.name}</strong><span>{resourceTypeLabels[getResourceType(server)]} / {server.privateIp}</span></td>
                   <td>{account?.alias ?? "--"}</td>
                   <td><StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText></td>
                   <td>{server.lastSeen}</td>
-                  <td>{server.files}</td>
-                  <td>
-                    {server.agentStatus === "online"
-                      ? "保持现有采集策略"
-                      : server.agentStatus === "offline"
-                        ? "实例离线，恢复运行后再检查探针"
-                        : "检查 Agent 服务或补装探针"}
-                  </td>
                 </tr>
               );
             })}
@@ -2118,7 +2784,7 @@ export function CloudResourceConsole() {
               <th>时间</th>
               <th>类型</th>
               <th>级别</th>
-              <th>服务器</th>
+              <th>资源</th>
               <th>账号 / 地域</th>
               <th>内容</th>
               <th>状态</th>
@@ -2146,51 +2812,13 @@ export function CloudResourceConsole() {
     </section>
   );
 
-  const renderFilesPage = () => (
-    <section className="page-main-section">
-      <div className="table-panel">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>服务器</th>
-              <th>云平台 / 账号</th>
-              <th>今日入云文件</th>
-              <th>最近状态</th>
-              <th>建议</th>
-            </tr>
-          </thead>
-          <tbody>
-            {servers.map((server) => {
-              const account = getAccount(server.accountId);
-              return (
-                <tr key={server.id}>
-                  <td>{server.name}</td>
-                  <td>{providerLabels[server.provider]} / {account?.alias ?? "--"}</td>
-                  <td>{server.files}</td>
-                  <td>
-                    {server.agentStatus === "online"
-                      ? "采集正常"
-                      : server.agentStatus === "offline"
-                        ? "实例离线，暂停采集判断"
-                        : "等待探针恢复"}
-                  </td>
-                  <td>{server.files === 0 ? "确认日志目录和自动上传配置" : "保持当前队列策略"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-
   const renderAiPage = () => (
     <section className="page-main-section">
       <div className="table-panel">
         <table className="data-table">
           <thead>
             <tr>
-              <th>服务器</th>
+              <th>资源</th>
               <th>AI 分析次数</th>
               <th>知识库命中</th>
               <th>最近结论</th>
@@ -2219,7 +2847,7 @@ export function CloudResourceConsole() {
             <tr>
               <th>知识条目</th>
               <th>适用云平台</th>
-              <th>关联服务器</th>
+              <th>关联资源</th>
               <th>命中次数</th>
               <th>说明</th>
             </tr>
@@ -2274,9 +2902,9 @@ export function CloudResourceConsole() {
     <section className="page-main-section">
       <table className="detail-table settings-table">
         <tbody>
-          <tr><th>云账号接入</th><td>后端接入后支持阿里云、华为云、腾讯云凭据同步</td></tr>
+          <tr><th>云账号接入</th><td>后端已接入阿里云 ECS/RDS 凭据同步与只读查询</td></tr>
           <tr><th>探针接入</th><td>后续复用 Komari 的轻量 Agent 思路，统一上报基础监控与心跳</td></tr>
-          <tr><th>扩展能力</th><td>后续把日志采样、AI 摘要和知识沉淀都挂到实例异常排查链路</td></tr>
+          <tr><th>扩展能力</th><td>后续把 AI 摘要和知识沉淀挂到实例异常排查链路</td></tr>
           <tr><th>安全边界</th><td>凭据不落前端，后端按账号维度加密保存和定时同步</td></tr>
         </tbody>
       </table>
@@ -2290,7 +2918,6 @@ export function CloudResourceConsole() {
     if (activePage === "monitor") return renderMonitorPage();
     if (activePage === "agents") return renderAgentsPage();
     if (activePage === "alerts") return renderEventsPage();
-    if (activePage === "files") return renderFilesPage();
     if (activePage === "ai") return renderAiPage();
     if (activePage === "knowledge") return renderKnowledgePage();
     if (activePage === "sync") return renderSyncPage();
@@ -2331,7 +2958,7 @@ export function CloudResourceConsole() {
         <header className="admin-header">
           <div>
             <h1>{getPageTitle(activePage)}</h1>
-            <p>当前先收口阿里云单账号 ECS 监控，文件入云、AI 分析和知识库保留为实例排查扩展能力。</p>
+            <p>当前先收口阿里云 ECS 与 RDS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
           </div>
           <div className="header-meta">
             <span>{USE_MOCK ? "当前为前端样例数据" : "当前为真实云账号数据"}</span>

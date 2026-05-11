@@ -1,8 +1,10 @@
 // 本文件用于定义阿里云只读云资产模型
-// 文件职责：收敛 ECS 与云监控返回给控制台的最小字段
+// 文件职责：收敛 ECS、RDS 与监控返回给控制台的最小字段
 // 边界与容错：只表达查询结果，不包含任何会修改云资源的操作参数
 
 package aliyun
+
+import "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/common"
 
 type Config struct {
 	AccessKeyID     string
@@ -12,41 +14,61 @@ type Config struct {
 	MetricPeriod    string
 }
 
-type Instance struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	HostName    string   `json:"hostName"`
-	Provider    string   `json:"provider"`
-	RegionID    string   `json:"regionId"`
-	ZoneID      string   `json:"zoneId"`
-	Status      string   `json:"status"`
-	OSName      string   `json:"osName"`
-	OSType      string   `json:"osType"`
-	Type        string   `json:"type"`
-	CPU         int      `json:"cpu"`
-	MemoryMB    int      `json:"memoryMb"`
-	PublicIPs   []string `json:"publicIps"`
-	EipAddress  string   `json:"eipAddress,omitempty"`
-	EipID       string   `json:"eipId,omitempty"`
-	PrivateIPs  []string `json:"privateIps"`
-	VpcID       string   `json:"vpcId"`
-	VSwitchID   string   `json:"vSwitchId"`
-	SecurityIDs []string `json:"securityGroupIds"`
-	CreatedAt   string   `json:"createdAt"`
-	ExpiredAt   string   `json:"expiredAt"`
+type Instance = common.Instance
+
+type RDSEndpoint struct {
+	ConnectionString     string `json:"connectionString"`
+	Port                 string `json:"port"`
+	IPAddress            string `json:"ipAddress,omitempty"`
+	IPType               string `json:"ipType,omitempty"`
+	ConnectionStringType string `json:"connectionStringType,omitempty"`
+	Availability         string `json:"availability,omitempty"`
+	VPCID                string `json:"vpcId,omitempty"`
+	VSwitchID            string `json:"vSwitchId,omitempty"`
 }
 
-type MetricPoint struct {
-	Timestamp int64   `json:"timestamp"`
-	Value     float64 `json:"value"`
-	Raw       any     `json:"raw,omitempty"`
+type RDSInstance struct {
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Provider           string        `json:"provider"`
+	RegionID           string        `json:"regionId"`
+	ZoneID             string        `json:"zoneId"`
+	Engine             string        `json:"engine"`
+	EngineVersion      string        `json:"engineVersion"`
+	Status             string        `json:"status"`
+	LockMode           string        `json:"lockMode,omitempty"`
+	LockReason         string        `json:"lockReason,omitempty"`
+	Type               string        `json:"type,omitempty"`
+	Category           string        `json:"category,omitempty"`
+	Class              string        `json:"class,omitempty"`
+	ClassType          string        `json:"classType,omitempty"`
+	CPU                int           `json:"cpu,omitempty"`
+	CPURaw             string        `json:"cpuRaw,omitempty"`
+	MemoryMB           int64         `json:"memoryMb,omitempty"`
+	StorageGB          int           `json:"storageGb,omitempty"`
+	StorageType        string        `json:"storageType,omitempty"`
+	MaxConnections     int           `json:"maxConnections,omitempty"`
+	MaxIOPS            int           `json:"maxIops,omitempty"`
+	MaxIOMBPS          int           `json:"maxIombps,omitempty"`
+	NetworkType        string        `json:"networkType,omitempty"`
+	NetType            string        `json:"netType,omitempty"`
+	ConnectionMode     string        `json:"connectionMode,omitempty"`
+	ConnectionString   string        `json:"connectionString,omitempty"`
+	Port               string        `json:"port,omitempty"`
+	VpcID              string        `json:"vpcId,omitempty"`
+	VSwitchID          string        `json:"vSwitchId,omitempty"`
+	ResourceGroupID    string        `json:"resourceGroupId,omitempty"`
+	AccountType        string        `json:"accountType,omitempty"`
+	DeletionProtection bool          `json:"deletionProtection"`
+	CreatedAt          string        `json:"createdAt"`
+	ExpiredAt          string        `json:"expiredAt"`
+	PayType            string        `json:"payType"`
+	Endpoints          []RDSEndpoint `json:"endpoints,omitempty"`
+	DetailErrors       []string      `json:"detailErrors,omitempty"`
+	ExpiresInDays      *int          `json:"expiresInDays,omitempty"`
+	ExpirationStatus   string        `json:"expirationStatus"`
+	ExpirationMessage  string        `json:"expirationMessage"`
 }
 
-type MetricSeries struct {
-	InstanceID string        `json:"instanceId"`
-	RegionID   string        `json:"regionId"`
-	Namespace  string        `json:"namespace"`
-	MetricName string        `json:"metricName"`
-	Period     string        `json:"period"`
-	Points     []MetricPoint `json:"points"`
-}
+type MetricPoint = common.MetricPoint
+type MetricSeries = common.MetricSeries

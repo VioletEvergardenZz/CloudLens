@@ -1,5 +1,5 @@
 // 本文件用于云账号本地持久化。
-// 文件职责：保存阿里云 ECS 只读账号配置，并对 AccessKey Secret 做本机加密落盘。
+// 文件职责：保存云厂商 ECS 只读账号配置，并对 AccessKey Secret 做本机加密落盘。
 // 边界与容错：只保存控制台录入的查询凭据，不负责云资源缓存与采集调度。
 
 package api
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	aliyuncloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/aliyun"
+	huaweicloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/cloud/huawei"
 
 	_ "modernc.org/sqlite"
 )
@@ -44,6 +45,7 @@ type cloudAccountRecord struct {
 	AccessKeyID           string    `json:"accessKeyId,omitempty"`
 	AccessKeyIDMasked     string    `json:"accessKeyIdMasked"`
 	AccessKeySecretCipher string    `json:"-"`
+	ProjectID             string    `json:"projectId,omitempty"`
 	Regions               []string  `json:"regions"`
 	MetricPeriod          string    `json:"metricPeriod"`
 	Enabled               bool      `json:"enabled"`
@@ -59,6 +61,7 @@ type cloudAccountUpsert struct {
 	Provider        string   `json:"provider"`
 	AccessKeyID     string   `json:"accessKeyId"`
 	AccessKeySecret string   `json:"accessKeySecret"`
+	ProjectID       string   `json:"projectId"`
 	Regions         []string `json:"regions"`
 	MetricPeriod    string   `json:"metricPeriod"`
 	Enabled         *bool    `json:"enabled"`
@@ -115,7 +118,7 @@ func (s *cloudAccountStore) List() ([]cloudAccountRecord, error) {
 	defer s.mu.Unlock()
 
 	rows, err := s.db.Query(`
-		SELECT id, provider, name, access_key_id, access_key_secret_cipher, regions_json,
+		SELECT id, provider, name, access_key_id, access_key_secret_cipher, project_id, regions_json,
 			metric_period, enabled, last_check_status, last_check_message, last_checked_at, created_at, updated_at
 		FROM cloud_accounts
 		ORDER BY id DESC
@@ -144,7 +147,7 @@ func (s *cloudAccountStore) Get(id int64) (*cloudAccountRecord, error) {
 	defer s.mu.Unlock()
 
 	row := s.db.QueryRow(`
-		SELECT id, provider, name, access_key_id, access_key_secret_cipher, regions_json,
+		SELECT id, provider, name, access_key_id, access_key_secret_cipher, project_id, regions_json,
 			metric_period, enabled, last_check_status, last_check_message, last_checked_at, created_at, updated_at
 		FROM cloud_accounts
 		WHERE id = ?
@@ -180,14 +183,15 @@ func (s *cloudAccountStore) Create(input cloudAccountUpsert) (*cloudAccountRecor
 	s.mu.Lock()
 	result, err := s.db.Exec(`
 		INSERT INTO cloud_accounts (
-			provider, name, access_key_id, access_key_secret_cipher, regions_json,
+			provider, name, access_key_id, access_key_secret_cipher, project_id, regions_json,
 			metric_period, enabled, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		"aliyun",
+		normalizeCloudProvider(input.Provider),
 		strings.TrimSpace(input.Name),
 		strings.TrimSpace(input.AccessKeyID),
 		secretCipher,
+		strings.TrimSpace(input.ProjectID),
 		regionsJSON,
 		normalizeMetricPeriod(input.MetricPeriod),
 		boolToInt(enabled),
@@ -219,6 +223,15 @@ func (s *cloudAccountStore) Update(id int64, input cloudAccountUpsert) (*cloudAc
 	if err != nil {
 		return nil, err
 	}
+	provider := normalizeCloudProvider(current.Provider)
+	if strings.TrimSpace(input.Provider) != "" {
+		provider = normalizeCloudProvider(input.Provider)
+	}
+	if provider != normalizeCloudProvider(current.Provider) {
+		if strings.TrimSpace(input.AccessKeyID) == "" || strings.TrimSpace(input.AccessKeySecret) == "" {
+			return nil, fmt.Errorf("切换云平台时需要重新填写 AccessKey ID 和 Secret")
+		}
+	}
 	secretCipher := current.AccessKeySecretCipher
 	if strings.TrimSpace(input.AccessKeySecret) != "" {
 		secretCipher, err = s.codec.Encrypt(input.AccessKeySecret)
@@ -238,6 +251,10 @@ func (s *cloudAccountStore) Update(id int64, input cloudAccountUpsert) (*cloudAc
 	if accessKeyID == "" {
 		accessKeyID = current.AccessKeyID
 	}
+	projectID := strings.TrimSpace(input.ProjectID)
+	if projectID == "" {
+		projectID = current.ProjectID
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		name = current.Name
@@ -251,13 +268,15 @@ func (s *cloudAccountStore) Update(id int64, input cloudAccountUpsert) (*cloudAc
 	s.mu.Lock()
 	_, err = s.db.Exec(`
 		UPDATE cloud_accounts
-		SET name = ?, access_key_id = ?, access_key_secret_cipher = ?, regions_json = ?,
+		SET provider = ?, name = ?, access_key_id = ?, access_key_secret_cipher = ?, project_id = ?, regions_json = ?,
 			metric_period = ?, enabled = ?, updated_at = ?
 		WHERE id = ?
 	`,
+		provider,
 		name,
 		accessKeyID,
 		secretCipher,
+		projectID,
 		mustCloudJSON(regions),
 		metricPeriod,
 		boolToInt(enabled),
@@ -309,6 +328,9 @@ func (s *cloudAccountStore) AliyunConfig(id int64) (aliyuncloud.Config, *cloudAc
 	if err != nil {
 		return aliyuncloud.Config{}, nil, err
 	}
+	if normalizeCloudProvider(account.Provider) != aliyuncloud.ProviderName {
+		return aliyuncloud.Config{}, nil, fmt.Errorf("云账号不是阿里云账号")
+	}
 	if !account.Enabled {
 		return aliyuncloud.Config{}, nil, fmt.Errorf("云账号已停用")
 	}
@@ -319,6 +341,30 @@ func (s *cloudAccountStore) AliyunConfig(id int64) (aliyuncloud.Config, *cloudAc
 	return aliyuncloud.Config{
 		AccessKeyID:     account.AccessKeyID,
 		AccessKeySecret: secret,
+		Regions:         account.Regions,
+		MetricPeriod:    account.MetricPeriod,
+	}, account, nil
+}
+
+func (s *cloudAccountStore) HuaweiConfig(id int64) (huaweicloud.Config, *cloudAccountRecord, error) {
+	account, err := s.Get(id)
+	if err != nil {
+		return huaweicloud.Config{}, nil, err
+	}
+	if normalizeCloudProvider(account.Provider) != huaweicloud.ProviderName {
+		return huaweicloud.Config{}, nil, fmt.Errorf("云账号不是华为云账号")
+	}
+	if !account.Enabled {
+		return huaweicloud.Config{}, nil, fmt.Errorf("云账号已停用")
+	}
+	secret, err := s.codec.Decrypt(account.AccessKeySecretCipher)
+	if err != nil {
+		return huaweicloud.Config{}, nil, fmt.Errorf("解密云账号密钥失败: %w", err)
+	}
+	return huaweicloud.Config{
+		AccessKeyID:     account.AccessKeyID,
+		AccessKeySecret: secret,
+		ProjectID:       account.ProjectID,
 		Regions:         account.Regions,
 		MetricPeriod:    account.MetricPeriod,
 	}, account, nil
@@ -413,6 +459,7 @@ func scanCloudAccount(row cloudAccountScanner) (cloudAccountRecord, error) {
 		&item.Name,
 		&item.AccessKeyID,
 		&item.AccessKeySecretCipher,
+		&item.ProjectID,
 		&regionsJSON,
 		&item.MetricPeriod,
 		&enabledValue,
@@ -443,6 +490,7 @@ func migrateCloudAccountStore(db *sql.DB) error {
 			name TEXT NOT NULL,
 			access_key_id TEXT NOT NULL,
 			access_key_secret_cipher TEXT NOT NULL,
+			project_id TEXT NOT NULL DEFAULT '',
 			regions_json TEXT NOT NULL DEFAULT '[]',
 			metric_period TEXT NOT NULL DEFAULT '60',
 			enabled INTEGER NOT NULL DEFAULT 1,
@@ -460,12 +508,47 @@ func migrateCloudAccountStore(db *sql.DB) error {
 			return fmt.Errorf("migrate cloud sqlite failed: %w", err)
 		}
 	}
+	if err := addCloudAccountColumnIfMissing(db, "project_id", `ALTER TABLE cloud_accounts ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addCloudAccountColumnIfMissing(db *sql.DB, columnName, stmt string) error {
+	rows, err := db.Query(`PRAGMA table_info(cloud_accounts)`)
+	if err != nil {
+		return fmt.Errorf("inspect cloud sqlite schema failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return fmt.Errorf("scan cloud sqlite schema failed: %w", err)
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("scan cloud sqlite schema failed: %w", err)
+	}
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("migrate cloud sqlite column %s failed: %w", columnName, err)
+	}
 	return nil
 }
 
 func validateCloudAccountInput(input cloudAccountUpsert, secretRequired bool) error {
-	if provider := strings.TrimSpace(input.Provider); provider != "" && provider != "aliyun" {
-		return fmt.Errorf("当前仅支持阿里云 ECS 账号")
+	if _, err := validateCloudProvider(input.Provider); err != nil {
+		return err
 	}
 	if secretRequired {
 		if strings.TrimSpace(input.Name) == "" {
@@ -482,6 +565,24 @@ func validateCloudAccountInput(input cloudAccountUpsert, secretRequired bool) er
 		}
 	}
 	return nil
+}
+
+func validateCloudProvider(provider string) (string, error) {
+	normalized := normalizeCloudProvider(provider)
+	switch normalized {
+	case aliyuncloud.ProviderName, huaweicloud.ProviderName:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("当前仅支持阿里云 ECS 账号和华为云 ECS 账号")
+	}
+}
+
+func normalizeCloudProvider(provider string) string {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	if normalized == "" {
+		return aliyuncloud.ProviderName
+	}
+	return normalized
 }
 
 func resolveCloudDataDir(raw string) string {
