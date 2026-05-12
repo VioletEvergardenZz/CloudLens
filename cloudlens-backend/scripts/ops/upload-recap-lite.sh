@@ -4,7 +4,7 @@ set -euo pipefail
 # 上传链路轻量复盘（macOS/Linux）：
 # 1) 采集压测前后 metrics + health 快照
 # 2) 执行队列压测
-# 3) 输出统一 JSON/Markdown 结果，便于阶段收口归档
+# 3) 输出统一 JSON/Markdown 结果，便于阶段结果归档
 
 usage() {
   cat <<'EOF'
@@ -361,4 +361,3 @@ if [[ "$ALL_PASSED" != "true" && "$ALLOW_GATE_FAIL" -ne 1 ]]; then
 fi
 
 exit 0
-

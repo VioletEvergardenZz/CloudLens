@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 华为云真实账号回归（macOS/Linux）
-# 核心目标：抽样核对华为云 ECS 字段、CES 指标口径、Project ID 配置和到期状态。
+# 核心目标：抽样核对华为云 ECS 字段、CES 指标说明、Project ID 配置和到期状态。
 
 usage() {
   cat <<'EOF'

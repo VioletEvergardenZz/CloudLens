@@ -1,5 +1,5 @@
 ﻿# 本脚本用于控制面 Agent 在线状态巡检
-# 目标：统一“在线判定”口径，输出结构化结果并支持门禁退出码
+# 目标：统一“在线判定”规则，输出结构化结果并支持门禁退出码
 
 param(
   [string]$BaseUrl = "http://localhost:8082",
@@ -316,4 +316,3 @@ if ($FailOnOffline -and $offlineTotal -gt $MaxOfflineAgents) {
 }
 
 exit 0
-

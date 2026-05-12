@@ -4,7 +4,7 @@
  * 边界处理：对空数据、异常数据和超时请求提供兜底展示
  */
 
-/* 本文件用于事件中心页原型，把事件分诊、规则配置和运行设置收口成更像成熟后台的结构。 */
+/* 本文件用于事件中心页原型，把事件分诊、规则配置和运行设置整理成更像成熟后台的结构。 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./Alert.css";
@@ -866,7 +866,7 @@ export function AlertConsole({ embedded = false }: AlertConsoleProps) {
               <div className="section-title">
                 <div>
                   <h2>事件列表</h2>
-                  <span>用列表页承担筛选与分诊，不再把详情和配置混在一起</span>
+                  <span>用列表页承担筛选与分诊，详情和配置各自独立</span>
                 </div>
               </div>
 

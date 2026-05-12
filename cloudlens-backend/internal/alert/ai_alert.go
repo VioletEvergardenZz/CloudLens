@@ -251,7 +251,7 @@ func (m *Manager) buildNotificationAnalysis(result decisionResult, line string, 
 	if strings.TrimSpace(summary) == "" {
 		return "AI研判降级：AI返回为空，未形成有效结论"
 	}
-	// 同步回写运行态，保证 Dashboard 与通知看到的研判口径一致。
+	// 同步回写运行态，保证 Dashboard 与通知看到的分析结果一致。
 	m.state.AttachAnalysis(result.id, summary)
 	return summary
 }
@@ -427,7 +427,7 @@ func formatAIAlertSummary(result aiAlertResult) string {
 	return strings.Join(parts, "\n")
 }
 
-// formatAIAlertOpsSummary 将 AI 结果转成“故障级别/根因判断/处置建议”的运维口径摘要。
+// formatAIAlertOpsSummary 将 AI 结果转成“故障级别/根因判断/处置建议”的运维摘要。
 func formatAIAlertOpsSummary(result aiAlertResult) string {
 	summary := strings.TrimSpace(result.Summary)
 	if summary == "" {

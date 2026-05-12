@@ -577,7 +577,7 @@ func (fs *FileService) Stop() error {
 
 // processFile 处理单个文件：上传、触发构建、发送通知
 // processFile 是上传执行主路径
-// 它统一负责上传 重试 通知和运行态更新 避免分散状态更新导致口径不一致
+// 它统一负责上传 重试 通知和运行态更新 避免分散状态更新导致状态不一致
 func (fs *FileService) processFile(ctx context.Context, filePath string) error {
 	start := time.Now()
 	manual := fs.consumeManualOnce(filePath)

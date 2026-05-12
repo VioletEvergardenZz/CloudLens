@@ -118,6 +118,18 @@ const emptyDashboardLite: Partial<DashboardPayload> = {
   uploadRecords: [],
 };
 
+const emptyHeroCopy = {
+  agent: "--",
+  watchDirs: [],
+  suffixFilter: "--",
+  silence: "--",
+  queue: "--",
+  concurrency: "--",
+};
+
+const emptyMetricCards: DashboardPayload["metricCards"] = [];
+const emptyMonitorSummary: DashboardPayload["monitorSummary"] = [];
+
 const formatTime = (value?: string) => {
   if (!value) return "--";
   const ts = Date.parse(value);
@@ -234,9 +246,9 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
     };
   }, []);
 
-  const hero = dashboard.heroCopy ?? heroCopyMock;
-  const metricCards = dashboard.metricCards ?? metricCardsMock;
-  const monitorSummary = dashboard.monitorSummary ?? monitorSummaryMock;
+  const hero = dashboard.heroCopy ?? emptyHeroCopy;
+  const metricCards = dashboard.metricCards ?? emptyMetricCards;
+  const monitorSummary = dashboard.monitorSummary ?? emptyMonitorSummary;
 
   const controlSummary = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -282,7 +294,7 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
       });
     }
 
-    if (!rows.length) {
+    if (!rows.length && USE_MOCK) {
       rows.push(
         {
           system: "订单风控中心",
@@ -365,7 +377,7 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
       {
         label: "知识复用",
         value: `${alerts.stats.sent ?? 0} 条已通知`,
-        detail: "高频事件应及时沉淀为 SOP，而不是继续散落在多个模块里。",
+        detail: "高频事件应及时沉淀为 SOP，便于后续复盘和复用。",
         view: "knowledge",
       },
     ],
@@ -423,7 +435,7 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
             <h2>先判断当前风险，再进入事件或系统详情</h2>
             <p>
               总览页只保留值班必须知道的四类信息：风险、事件队列、系统热点和动作积压。
-              不再把概念卡片堆成首页，而是收敛成标准后台入口。
+              页面入口按值班处理路径组织，便于快速进入对应模块。
             </p>
           </div>
 
@@ -516,7 +528,7 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
               </table>
             </div>
           ) : (
-            <div className="empty-state">当前没有需要收口的事件。</div>
+            <div className="empty-state">当前没有需要处理的事件。</div>
           )}
         </section>
 
@@ -606,6 +618,11 @@ export function OverviewConsole({ onViewChange }: OverviewConsoleProps) {
                     <td>{row.latestTime}</td>
                   </tr>
                 ))}
+                {!hotspotRows.length ? (
+                  <tr>
+                    <td className="empty-state" colSpan={6}>当前没有系统热点。</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>

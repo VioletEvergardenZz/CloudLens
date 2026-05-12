@@ -381,10 +381,13 @@ select {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .tree-line .tree-node {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
 }
 
 .tree-toggle {
@@ -421,6 +424,7 @@ select {
 }
 
 .tree-node {
+  box-sizing: border-box;
   width: 100%;
   min-height: 34px;
   border: 1px solid transparent;
@@ -482,11 +486,22 @@ select {
 }
 
 .tree-node.server {
+  width: calc(100% - 26px);
   min-height: 28px;
   margin-left: 26px;
   padding: 5px 9px;
   color: #64748b;
   font-size: 12px;
+}
+
+.tree-node.server.with-state {
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tree-node.server.with-state .status-text {
+  flex: 0 0 auto;
 }
 
 .tree-node em {
@@ -1202,8 +1217,7 @@ select {
 }
 
 .monitor-stat-strip,
-.monitor-refresh-panel,
-.agent-detail-panel {
+.monitor-refresh-panel {
   border: 1px solid #d8dee6;
   background: #ffffff;
 }
@@ -1903,106 +1917,190 @@ select {
   background: #ef4444;
 }
 
-.agent-evidence-strip {
+.agent-governance-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  border-bottom: 1px solid #eef0f3;
-  background: #eef0f3;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.agent-evidence-strip span {
+.agent-governance-panel {
   min-width: 0;
+  border: 1px solid #d8dee6;
+  border-radius: 6px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.agent-governance-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.agent-governance-list,
+.agent-summary-list,
+.agent-source-grid {
   padding: 12px;
+}
+
+.agent-governance-list,
+.agent-summary-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-governance-item {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
   background: #fbfcfe;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.agent-governance-item strong,
+.agent-governance-item span {
+  min-width: 0;
+  display: block;
+}
+
+.agent-governance-item strong {
   color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.agent-governance-item span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.agent-summary-row {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.agent-summary-row strong,
+.agent-summary-row span {
+  min-width: 0;
+  display: block;
+}
+
+.agent-summary-row strong {
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.agent-summary-row > div:first-child span {
+  margin-top: 3px;
+  color: #64748b;
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.agent-evidence-strip b {
-  display: block;
-  margin-bottom: 4px;
+.agent-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agent-summary-metrics span {
+  min-width: 0;
+  border: 1px solid #eef0f3;
+  border-radius: 5px;
+  background: #f8fafc;
+  padding: 8px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.35;
 }
 
-.agent-detail-layout {
-  padding: 12px;
-  display: grid;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
-  gap: 12px;
+.agent-summary-metrics b {
+  display: block;
+  margin-bottom: 3px;
+  color: #111827;
+  font-size: 14px;
+  line-height: 1;
 }
 
-.agent-health-panel,
-.agent-source-panel {
+.agent-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.agent-progress-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.agent-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.agent-source-card {
   min-width: 0;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #ffffff;
+  padding: 12px;
 }
 
-.agent-health-panel {
-  padding: 14px;
-}
-
-.agent-health-panel > div > span,
-.agent-panel-title span {
+.agent-source-card span,
+.agent-source-card strong,
+.agent-source-card em,
+.agent-source-card small {
   display: block;
+  min-width: 0;
+}
+
+.agent-source-card span {
   color: #64748b;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
-.agent-health-panel > div > strong {
-  display: block;
-  margin-top: 4px;
+.agent-source-card strong {
+  margin-top: 6px;
   color: #111827;
-  font-size: 24px;
+  font-size: 18px;
   line-height: 1.1;
 }
 
-.agent-health-panel p {
-  margin: 8px 0 0;
-  color: #475569;
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.agent-health-panel dl {
-  margin: 14px 0 0;
-  display: grid;
-  gap: 10px;
-}
-
-.agent-health-panel dl div {
-  min-width: 0;
-  border-top: 1px solid #eef0f3;
-  padding-top: 10px;
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 10px;
-}
-
-.agent-health-panel dt,
-.agent-health-panel dd {
-  min-width: 0;
-  margin: 0;
+.agent-source-card em,
+.agent-source-card small {
+  margin-top: 7px;
+  color: #64748b;
   font-size: 12px;
+  font-style: normal;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.agent-health-panel dt {
+.agent-empty-state {
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 18px;
   color: #64748b;
-  font-weight: 700;
-}
-
-.agent-health-panel dd {
-  color: #111827;
+  font-size: 12px;
+  text-align: center;
 }
 
 .agent-panel-title {
@@ -2022,103 +2120,126 @@ select {
   margin-top: 3px;
 }
 
-.agent-source-list {
-  display: grid;
+.alert-management-page {
+  align-content: start;
 }
 
-.agent-source-row {
-  min-width: 0;
-  border-bottom: 1px solid #eef0f3;
-  padding: 10px 12px;
+.alert-management-topline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 132px 56px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
   gap: 12px;
-  align-items: center;
 }
 
-.agent-source-row:last-child {
-  border-bottom: 0;
+.cloud-alert-table {
+  min-width: 1320px;
+  table-layout: fixed;
 }
 
-.agent-source-row strong,
-.agent-source-row span {
-  min-width: 0;
+.cloud-alert-table .alert-severity-col {
+  width: 78px;
+}
+
+.cloud-alert-table .alert-resource-col {
+  width: 190px;
+}
+
+.cloud-alert-table .alert-account-col {
+  width: 230px;
+}
+
+.cloud-alert-table .alert-metric-col {
+  width: 150px;
+}
+
+.cloud-alert-table .alert-message-col {
+  width: 250px;
+}
+
+.cloud-alert-table .alert-suggestion-col {
+  width: 310px;
+}
+
+.cloud-alert-table .alert-time-col {
+  width: 110px;
+}
+
+.cloud-alert-table td {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.alert-management-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(420px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.alert-rule-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.alert-rule-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 11px 12px;
+}
+
+.alert-rule-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.alert-rule-item-head strong,
+.alert-rule-item-head span {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.agent-source-row strong {
+.alert-rule-item-head strong {
   color: #111827;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.35;
 }
 
-.agent-source-row span,
-.agent-source-row em {
+.alert-rule-item-head span:not(.status-text) {
+  margin-top: 4px;
   color: #64748b;
   font-size: 12px;
-  line-height: 1.4;
-}
-
-.agent-source-row span {
-  margin-top: 3px;
-}
-
-.agent-source-row em {
-  font-style: normal;
-  text-align: right;
-}
-
-.agent-sparkline {
-  width: 132px;
-  height: 34px;
-}
-
-.agent-sparkline path {
-  fill: none;
-  stroke: #2563eb;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.agent-sparkline-empty,
-.agent-source-empty {
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.agent-sparkline-empty {
-  display: inline-flex;
-  width: 132px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  border: 1px dashed #cbd5e1;
-  border-radius: 4px;
-  background: #f8fafc;
-}
-
-.agent-source-empty {
-  padding: 18px;
-}
-
-.agent-source-empty strong,
-.agent-source-empty span {
-  display: block;
-}
-
-.agent-source-empty strong {
-  color: #111827;
-  font-size: 13px;
-}
-
-.agent-source-empty span {
-  margin-top: 5px;
-  color: #64748b;
   line-height: 1.45;
+}
+
+.alert-rule-item-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  border-top: 1px solid #eef0f3;
+  padding-top: 10px;
+}
+
+.alert-rule-item-meta span {
+  min-width: 0;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.alert-rule-item-meta b {
+  display: block;
+  margin-bottom: 2px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.alert-coverage-table {
+  min-width: 680px;
 }
 
 .settings-table {
@@ -2192,6 +2313,10 @@ select {
     --monitor-resource-pane-width: clamp(240px, 21vw, 280px);
   }
 
+  .alert-management-grid {
+    grid-template-columns: 1fr;
+  }
+
   .monitor-resource-summary {
     grid-template-columns: 1fr;
   }
@@ -2231,15 +2356,15 @@ select {
   }
 
   .monitor-topline,
+  .alert-management-topline,
   .monitor-workspace,
   .agent-command-panel,
-  .agent-detail-layout {
+  .agent-governance-grid {
     grid-template-columns: 1fr;
   }
 
   .agent-overview-grid,
-  .agent-status-lanes,
-  .agent-evidence-strip {
+  .agent-status-lanes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2260,7 +2385,8 @@ select {
   }
 
   .monitor-resource-summary,
-  .monitor-chart-grid {
+  .monitor-chart-grid,
+  .alert-rule-item-meta {
     grid-template-columns: 1fr;
   }
 
@@ -2295,8 +2421,8 @@ select {
 
   .agent-overview-grid,
   .agent-status-lanes,
-  .agent-evidence-strip,
-  .agent-source-row {
+  .agent-summary-metrics,
+  .agent-source-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2304,15 +2430,6 @@ select {
     align-items: flex-start;
     flex-direction: column;
     white-space: normal;
-  }
-
-  .agent-source-row em {
-    text-align: left;
-  }
-
-  .agent-sparkline,
-  .agent-sparkline-empty {
-    width: 100%;
   }
 
   .account-list-title {
@@ -2360,12 +2477,11 @@ select {
 .admin-console.theme-dark .monitor-stat-strip,
 .admin-console.theme-dark .monitor-refresh-panel,
 .admin-console.theme-dark .monitor-resource-pane,
-.admin-console.theme-dark .agent-detail-panel,
 .admin-console.theme-dark .agent-command-panel,
 .admin-console.theme-dark .agent-overview-card,
 .admin-console.theme-dark .agent-status-lane,
-.admin-console.theme-dark .agent-health-panel,
-.admin-console.theme-dark .agent-source-panel,
+.admin-console.theme-dark .agent-governance-panel,
+.admin-console.theme-dark .alert-rule-item,
 .admin-console.theme-dark .settings-table {
   border-color: var(--dark-border);
   background: var(--dark-panel);
@@ -2398,11 +2514,13 @@ select {
 .admin-console.theme-dark .agent-command-copy strong,
 .admin-console.theme-dark .agent-overview-card strong,
 .admin-console.theme-dark .agent-status-lane strong,
-.admin-console.theme-dark .agent-health-panel > div > strong,
-.admin-console.theme-dark .agent-health-panel dd,
+.admin-console.theme-dark .agent-governance-item strong,
+.admin-console.theme-dark .agent-summary-row strong,
+.admin-console.theme-dark .agent-summary-metrics b,
+.admin-console.theme-dark .agent-source-card strong,
 .admin-console.theme-dark .agent-panel-title strong,
-.admin-console.theme-dark .agent-source-row strong,
-.admin-console.theme-dark .agent-source-empty strong,
+.admin-console.theme-dark .alert-rule-item-head strong,
+.admin-console.theme-dark .alert-rule-item-meta span,
 .admin-console.theme-dark .tree-node.provider,
 .admin-console.theme-dark .tree-node.product,
 .admin-console.theme-dark .detail-table td {
@@ -2429,13 +2547,15 @@ select {
 .admin-console.theme-dark .agent-overview-card span,
 .admin-console.theme-dark .agent-overview-card em,
 .admin-console.theme-dark .agent-status-lane div > span:not(.status-text),
-.admin-console.theme-dark .agent-health-panel > div > span,
-.admin-console.theme-dark .agent-health-panel p,
-.admin-console.theme-dark .agent-health-panel dt,
+.admin-console.theme-dark .agent-governance-item span,
+.admin-console.theme-dark .agent-summary-row > div:first-child span,
+.admin-console.theme-dark .agent-summary-metrics span,
+.admin-console.theme-dark .agent-source-card span,
+.admin-console.theme-dark .agent-source-card em,
+.admin-console.theme-dark .agent-source-card small,
 .admin-console.theme-dark .agent-panel-title span,
-.admin-console.theme-dark .agent-source-row span,
-.admin-console.theme-dark .agent-source-row em,
-.admin-console.theme-dark .agent-source-empty span,
+.admin-console.theme-dark .alert-rule-item-head span:not(.status-text),
+.admin-console.theme-dark .alert-rule-item-meta b,
 .admin-console.theme-dark .account-title-actions small {
   color: var(--dark-muted);
 }
@@ -2542,12 +2662,12 @@ select {
 .admin-console.theme-dark .detail-table td,
 .admin-console.theme-dark .simple-summary span,
 .admin-console.theme-dark .monitor-stat-strip span,
-.admin-console.theme-dark .agent-evidence-strip,
-.admin-console.theme-dark .agent-evidence-strip span,
-.admin-console.theme-dark .agent-health-panel dl div,
+.admin-console.theme-dark .agent-governance-item,
+.admin-console.theme-dark .agent-summary-row,
+.admin-console.theme-dark .agent-summary-metrics span,
+.admin-console.theme-dark .agent-source-card,
 .admin-console.theme-dark .agent-panel-title,
-.admin-console.theme-dark .agent-source-row,
-.admin-console.theme-dark .agent-detail-groups .detail-table {
+.admin-console.theme-dark .alert-rule-item-meta {
   border-color: var(--dark-border-soft);
 }
 
@@ -2734,13 +2854,22 @@ select {
   color: var(--dark-text-soft);
 }
 
+.admin-console.theme-dark .monitor-resource-summary span {
+  background: var(--dark-panel);
+}
+
 .admin-console.theme-dark .monitor-resource-summary b,
 .admin-console.theme-dark .monitor-stat-strip b,
+.admin-console.theme-dark .monitor-refresh-panel span,
 .admin-console.theme-dark .monitor-chart-card-head span:not(.status-text),
 .admin-console.theme-dark .monitor-chart-value-row span,
 .admin-console.theme-dark .monitor-chart-facts b,
 .admin-console.theme-dark .monitor-chart-empty span {
   color: var(--dark-muted);
+}
+
+.admin-console.theme-dark .monitor-resource-summary em {
+  color: var(--dark-text);
 }
 
 .admin-console.theme-dark .monitor-chart-card-head h4,
@@ -2820,26 +2949,22 @@ select {
   border-top-color: var(--dark-border-soft);
 }
 
-.admin-console.theme-dark .agent-evidence-strip,
 .admin-console.theme-dark .agent-panel-title,
-.admin-console.theme-dark .agent-sparkline-empty {
+.admin-console.theme-dark .agent-summary-metrics span,
+.admin-console.theme-dark .agent-empty-state {
   background: var(--dark-panel-soft);
 }
 
-.admin-console.theme-dark .agent-evidence-strip span {
+.admin-console.theme-dark .agent-governance-item,
+.admin-console.theme-dark .agent-summary-row,
+.admin-console.theme-dark .agent-source-card {
   background: var(--dark-panel);
-  color: var(--dark-text-soft);
 }
 
-.admin-console.theme-dark .agent-evidence-strip b {
-  color: var(--dark-muted);
+.admin-console.theme-dark .agent-progress-track {
+  background: var(--dark-surface);
 }
 
-.admin-console.theme-dark .agent-sparkline path {
-  stroke: #5eead4;
-}
-
-.admin-console.theme-dark .agent-sparkline-empty {
-  border-color: var(--dark-border);
-  color: var(--dark-muted);
+.admin-console.theme-dark .agent-progress-track i {
+  background: var(--dark-accent);
 }

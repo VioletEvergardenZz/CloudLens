@@ -411,7 +411,7 @@ func (h *handler) controlProgressTask(w http.ResponseWriter, r *http.Request, ta
 	})
 }
 
-// controlCompleteTask 负责任务终态收口
+// controlCompleteTask 负责任务终态处理
 // 成功 失败 超时都在这里统一落库并写入审计 便于指标统计一致
 func (h *handler) controlCompleteTask(w http.ResponseWriter, r *http.Request, taskID string) {
 	var req controlTaskCompleteRequest

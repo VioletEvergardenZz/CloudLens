@@ -102,7 +102,7 @@ jq -n \
   --arg ccFile "$CONSOLE_CHECK" \
   '{
     generatedAt: $generatedAt,
-    scope: "A类收口执行周（lite recap）",
+    scope: "A类任务执行周（lite recap）",
     checks: {
       backendTests: {pass: $backendPass},
       frontendBuild: {pass: $frontendPass},

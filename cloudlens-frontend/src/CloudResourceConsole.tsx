@@ -26,7 +26,7 @@ type Provider = "aliyun" | "huawei" | "tencent";
 type AccountStatus = "normal" | "warning" | "syncing" | "disabled";
 type ServerStatus = "running" | "warning" | "offline" | "maintenance";
 type AgentStatus = "online" | "stale" | "missing" | "offline";
-type ScopeKind = "all" | "product" | "productProvider" | "productAccount" | "productAccountRegion" | "region";
+type ScopeKind = "all" | "product" | "productProvider" | "productAccount" | "productAccountRegion" | "region" | "server";
 type ThemeMode = "light" | "dark";
 type PublicIpType = "public" | "eip" | "none";
 type ResourceType = "ecs" | "rds";
@@ -101,16 +101,6 @@ type CloudServer = {
   files: number;
   ai: number;
   kb: number;
-};
-
-type OperationEvent = {
-  id: string;
-  serverId: string;
-  time: string;
-  type: "告警" | "AI分析" | "知识库" | "探针";
-  level: "info" | "warning" | "critical";
-  message: string;
-  status: string;
 };
 
 type SyncTask = {
@@ -356,6 +346,59 @@ type CloudAssetIssue = {
   message: string;
 };
 
+type AgentStatusCounter = Record<AgentStatus, number>;
+
+type AgentAccountSummary = {
+  key: string;
+  provider: Provider;
+  accountName: string;
+  total: number;
+  covered: number;
+  statusCounts: AgentStatusCounter;
+  pointCount: number;
+  latestTimestamp: number;
+  resourceTypes: ResourceType[];
+  regionCount: number;
+  realSampleResourceCount: number;
+  sources: string[];
+  riskCount: number;
+};
+
+type AgentRegionSummary = {
+  key: string;
+  provider: Provider;
+  region: string;
+  total: number;
+  covered: number;
+  statusCounts: AgentStatusCounter;
+  accountCount: number;
+  pointCount: number;
+  latestTimestamp: number;
+  realSampleResourceCount: number;
+  riskCount: number;
+};
+
+type AgentSourceSummary = {
+  source: string;
+  resourceCount: number;
+  pointCount: number;
+  latestTimestamp: number;
+  periods: string[];
+};
+
+type AgentSourceSnapshot = {
+  source: string;
+  pointCount: number;
+  latestTimestamp: number;
+  periods: string[];
+};
+
+type AgentGovernanceItem = {
+  title: string;
+  detail: string;
+  status: AgentStatus | "normal";
+};
+
 type ResourceAccountNode = {
   key: string;
   resourceType: ResourceType;
@@ -378,6 +421,51 @@ type ResourceProductNode = {
   resourceType: ResourceType;
   rows: CloudServer[];
   providers: ResourceProviderNode[];
+};
+
+type CloudAlertSeverity = "info" | "warning" | "critical";
+
+type CloudAlertRuleResult = {
+  severity?: CloudAlertSeverity;
+  title?: string;
+  currentValue: string;
+  condition?: string;
+  message: string;
+  suggestion: string;
+};
+
+type CloudAlertRule = {
+  id: string;
+  title: string;
+  resourceTypes: ResourceType[];
+  providers: Provider[];
+  metric: string;
+  condition: string;
+  severity: CloudAlertSeverity;
+  enabled: boolean;
+  notifyChannels: string[];
+  evaluate: (server: CloudServer) => CloudAlertRuleResult | null;
+};
+
+type CloudAlertReminder = {
+  id: string;
+  ruleId: string;
+  serverId: string;
+  accountId: string;
+  provider: Provider;
+  resourceType: ResourceType;
+  resourceName: string;
+  instanceId: string;
+  region: string;
+  severity: CloudAlertSeverity;
+  title: string;
+  metric: string;
+  condition: string;
+  currentValue: string;
+  message: string;
+  suggestion: string;
+  notifyChannels: string[];
+  updatedAt: string;
 };
 
 const providerLabels: Record<Provider, string> = {
@@ -518,6 +606,13 @@ const agentStatusDescriptions: Record<AgentStatus, string> = {
   missing: "尚未形成采样",
   offline: "资源离线不可采样",
 };
+
+const emptyAgentStatusCounter = (): AgentStatusCounter => ({
+  online: 0,
+  stale: 0,
+  missing: 0,
+  offline: 0,
+});
 
 const menuGroups: Array<{
   title: string;
@@ -869,45 +964,6 @@ const mockServers: CloudServer[] = [
     files: 8,
     ai: 1,
     kb: 0,
-  },
-];
-
-const events: OperationEvent[] = [
-  {
-    id: "evt-001",
-    serverId: "ecs-pay-01",
-    time: "13:17:42",
-    type: "告警",
-    level: "critical",
-    message: "支付任务队列积压超过阈值",
-    status: "AI 已给出处置建议",
-  },
-  {
-    id: "evt-002",
-    serverId: "huawei-db-01",
-    time: "13:15:03",
-    type: "告警",
-    level: "critical",
-    message: "只读数据库数据盘使用率达到 84%",
-    status: "知识库命中 disk-cleanup",
-  },
-  {
-    id: "evt-004",
-    serverId: "ecs-web-hk",
-    time: "12:39:18",
-    type: "探针",
-    level: "warning",
-    message: "海外 Web 探针心跳过期",
-    status: "等待实例侧恢复",
-  },
-  {
-    id: "evt-005",
-    serverId: "ecs-order-01",
-    time: "12:31:04",
-    type: "知识库",
-    level: "info",
-    message: "订单超时事件复用历史处置记录",
-    status: "已关联知识库",
   },
 ];
 
@@ -1735,16 +1791,31 @@ const latestMetricSnapshot = (overview?: AliyunOverviewResponse) => {
 const collectMetricSeries = (overview?: AliyunOverviewResponse) =>
   Object.values(overview?.metrics ?? {}).filter((series): series is AliyunMetricSeries => Boolean(series));
 
-const summarizeMetricSources = (overview?: AliyunOverviewResponse) => {
-  const sources = [
-    ...new Set(
-      collectMetricSeries(overview)
-        .filter((series) => hasMetricPoint(series))
-        .map((series) => metricSourceLabel(series))
-        .filter(Boolean)
-    ),
-  ];
-  return sources;
+const collectAvailableMetricSeries = (overview?: AliyunOverviewResponse) =>
+  collectMetricSeries(overview).filter((series) => hasMetricPoint(series));
+
+const summarizeMetricSourceSnapshots = (overview?: AliyunOverviewResponse): AgentSourceSnapshot[] => {
+  const sourceMap = new Map<string, AgentSourceSnapshot>();
+  collectAvailableMetricSeries(overview).forEach((series) => {
+    const source = metricSourceLabel(series);
+    if (!source) return;
+    const row = sourceMap.get(source) ?? {
+      source,
+      pointCount: 0,
+      latestTimestamp: 0,
+      periods: [],
+    };
+    const points = series.points ?? [];
+    const latest = latestPoint(points);
+    row.pointCount += points.length;
+    if (latest?.timestamp) row.latestTimestamp = Math.max(row.latestTimestamp, latest.timestamp);
+    if (series.period) {
+      const period = `${series.period}s`;
+      if (!row.periods.includes(period)) row.periods.push(period);
+    }
+    sourceMap.set(source, row);
+  });
+  return [...sourceMap.values()];
 };
 
 const formatCoveragePercent = (covered: number, total: number) => {
@@ -2017,7 +2088,8 @@ const parseScope = (scope: string): { kind: ScopeKind; value: string } => {
     kind === "productProvider" ||
     kind === "productAccount" ||
     kind === "productAccountRegion" ||
-    kind === "region"
+    kind === "region" ||
+    kind === "server"
   ) {
     return { kind, value: rest.join(":") };
   }
@@ -2031,6 +2103,7 @@ const serverMatchesScope = (server: CloudServer, parsedScope: { kind: ScopeKind;
   if (parsedScope.kind === "productAccount") return `${resourceType}:${server.provider}:${server.accountId}` === parsedScope.value;
   if (parsedScope.kind === "productAccountRegion") return `${resourceType}:${server.provider}:${server.accountId}:${server.region}` === parsedScope.value;
   if (parsedScope.kind === "region") return `${server.provider}:${server.region}` === parsedScope.value;
+  if (parsedScope.kind === "server") return server.id === parsedScope.value;
   return true;
 };
 
@@ -2068,17 +2141,218 @@ const summarizeCloudAssetIssues = (issues: CloudAssetIssue[]) => {
   return issues.length === 1 ? firstText : `${firstText}，另有 ${issues.length - 1} 项局部问题`;
 };
 
-const describeAgentResource = (server: CloudServer) => {
-  const resourceType = getResourceType(server);
-  if (resourceType === "rds") return "数据库性能参数采样";
-  return server.publicIpType === "none" ? "主机基础指标采样" : "主机与网络指标采样";
-};
-
 const formatDisplayTime = (raw?: string) => {
   if (!raw) return "--";
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return raw;
   return date.toLocaleString("zh-CN", { hour12: false });
+};
+
+const alertSeverityLabels: Record<CloudAlertSeverity, string> = {
+  info: "提示",
+  warning: "预警",
+  critical: "严重",
+};
+
+const alertSeverityRank: Record<CloudAlertSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+};
+
+const cloudAlertRules: CloudAlertRule[] = [
+  {
+    id: "resource-status",
+    title: "实例运行状态异常",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "资源状态",
+    condition: "非运行中触发",
+    severity: "critical",
+    enabled: true,
+    notifyChannels: ["控制台", "后续可接入钉钉/邮件"],
+    evaluate: (server) => {
+      if (server.status === "running") return null;
+      const resourceType = getResourceType(server);
+      const severity: CloudAlertSeverity = server.status === "offline" ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: serverStatusLabels[server.status],
+        condition: "状态不是运行中",
+        message: `${resourceTypeLabels[resourceType]} ${server.name} 当前为${serverStatusLabels[server.status]}`,
+        suggestion: server.status === "offline" ? "先确认实例是否被关停、释放或云厂商状态异常" : "关注变配、重启、迁移或锁定中的实例状态",
+      };
+    },
+  },
+  {
+    id: "metric-cpu",
+    title: "CPU 使用率过高",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "CPU",
+    condition: ">= 75% 预警，>= 85% 严重",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (typeof server.cpu !== "number" || server.cpu < 75) return null;
+      const severity: CloudAlertSeverity = server.cpu >= 85 ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: formatPercentValue(server.cpu),
+        message: `${server.name} CPU 已达到 ${formatPercentValue(server.cpu)}`,
+        suggestion: getResourceType(server) === "rds" ? "排查慢 SQL、连接数和突增查询，必要时评估规格升级" : "排查进程热点、定时任务和突发流量，必要时扩容或限流",
+      };
+    },
+  },
+  {
+    id: "metric-memory",
+    title: "内存使用率过高",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "内存",
+    condition: ">= 75% 预警，>= 85% 严重",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (typeof server.memory !== "number" || server.memory < 75) return null;
+      const severity: CloudAlertSeverity = server.memory >= 85 ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: formatPercentValue(server.memory),
+        message: `${server.name} 内存已达到 ${formatPercentValue(server.memory)}`,
+        suggestion: "观察最近采样趋势，排查内存泄漏、缓存膨胀或数据库连接堆积",
+      };
+    },
+  },
+  {
+    id: "metric-disk",
+    title: "磁盘或存储水位过高",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "磁盘 / 存储",
+    condition: ">= 80% 预警，>= 90% 严重",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (typeof server.disk !== "number" || server.disk < 80) return null;
+      const resourceType = getResourceType(server);
+      const severity: CloudAlertSeverity = server.disk >= 90 ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: formatPercentValue(server.disk),
+        message: `${server.name} ${resourceType === "rds" ? "存储" : "磁盘"}水位 ${formatPercentValue(server.disk)}`,
+        suggestion: resourceType === "rds" ? "确认表空间、日志和备份增长，准备扩容或清理策略" : "清理日志与临时文件，确认是否需要扩容数据盘",
+      };
+    },
+  },
+  {
+    id: "billing-expiration",
+    title: "包年包月资源即将到期",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "到期时间",
+    condition: "<= 30 天预警，已到期严重",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      const expiration = resolveExpirationInfo(server);
+      if (expiration.status !== "expired" && expiration.status !== "expiring") return null;
+      const severity: CloudAlertSeverity = expiration.status === "expired" ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: expiration.dateText ? `${expiration.text} / ${expiration.dateText}` : expiration.text,
+        condition: expiration.status === "expired" ? "已到期" : "剩余天数小于等于 30 天",
+        message: `${server.name} ${expiration.status === "expired" ? "已经到期" : `将在 ${expiration.text} 后到期`}`,
+        suggestion: "确认续费策略、预算归属和是否需要释放闲置资源",
+      };
+    },
+  },
+  {
+    id: "metric-freshness",
+    title: "云监控采样不可用",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "监控采样",
+    condition: "监控离线、偏旧或未同步",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (server.agentStatus === "online") return null;
+      const severity: CloudAlertSeverity = server.agentStatus === "offline" ? "critical" : "warning";
+      return {
+        severity,
+        currentValue: agentStatusLabels[server.agentStatus],
+        message: `${server.name} 监控状态为${agentStatusLabels[server.agentStatus]}`,
+        suggestion: "检查云监控权限、插件采集项和实例当前运行状态",
+      };
+    },
+  },
+  {
+    id: "rds-lock",
+    title: "RDS 锁定或保护状态",
+    resourceTypes: ["rds"],
+    providers: ["aliyun"],
+    metric: "RDS 锁定状态",
+    condition: "出现非空锁定模式",
+    severity: "warning",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (getResourceType(server) !== "rds") return null;
+      const lockMode = server.dbLockMode?.trim();
+      if (!lockMode || lockMode.toLowerCase() === "normal") return null;
+      return {
+        severity: "warning",
+        currentValue: lockMode,
+        message: `${server.name} 当前锁定状态为 ${lockMode}`,
+        suggestion: server.dbLockReason ? `查看锁定原因：${server.dbLockReason}` : "进入 RDS 控制台确认锁定原因和恢复动作",
+      };
+    },
+  },
+];
+
+const buildCloudAlertReminders = (servers: CloudServer[]): CloudAlertReminder[] => {
+  const nowText = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const reminders = servers.flatMap((server) =>
+    cloudAlertRules.flatMap((rule) => {
+      const resourceType = getResourceType(server);
+      if (!rule.enabled || !rule.resourceTypes.includes(resourceType) || !rule.providers.includes(server.provider)) return [];
+      const result = rule.evaluate(server);
+      if (!result) return [];
+      return [
+        {
+          id: `${rule.id}:${server.id}`,
+          ruleId: rule.id,
+          serverId: server.id,
+          accountId: server.accountId,
+          provider: server.provider,
+          resourceType,
+          resourceName: server.name,
+          instanceId: server.instanceId,
+          region: server.region,
+          severity: result.severity ?? rule.severity,
+          title: result.title ?? rule.title,
+          metric: rule.metric,
+          condition: result.condition ?? rule.condition,
+          currentValue: result.currentValue,
+          message: result.message,
+          suggestion: result.suggestion,
+          notifyChannels: rule.notifyChannels,
+          updatedAt: nowText,
+        },
+      ];
+    })
+  );
+  return reminders.sort((left, right) => {
+    const severityDiff = alertSeverityRank[left.severity] - alertSeverityRank[right.severity];
+    if (severityDiff !== 0) return severityDiff;
+    return left.resourceName.localeCompare(right.resourceName, "zh-CN");
+  });
 };
 
 const getStatusClass = (status: string) => {
@@ -2175,19 +2449,6 @@ function MetricChartCard({ item }: { item: MonitorMetric }) {
       </div>
       <p className={item.status === "ok" ? "monitor-chart-note muted" : "monitor-chart-note"}>{item.note}</p>
     </article>
-  );
-}
-
-function AgentMiniSparkline({ points }: { points: AliyunMetricPoint[] }) {
-  const recentPoints = recentMetricPoints(points, 10);
-  if (recentPoints.length < 2) {
-    return <span className="agent-sparkline-empty">{recentPoints.length === 1 ? "单点" : "暂无"}</span>;
-  }
-  const path = buildSparklinePath(recentPoints, 132, 34, 3);
-  return (
-    <svg className="agent-sparkline" viewBox="0 0 132 34" aria-hidden="true" focusable="false">
-      <path d={path} />
-    </svg>
   );
 }
 
@@ -2559,10 +2820,13 @@ export function CloudResourceConsole() {
     });
   };
 
-  const isTreeExpanded = (key: string) => expandedTree[key] !== false;
+  const isTreeExpanded = (key: string) => expandedTree[key] === true;
 
-  const toggleTreeNode = (key: string) => {
-    setExpandedTree((current) => ({ ...current, [key]: current[key] === false }));
+  const toggleTreeNode = (key: string, defaultExpanded = false) => {
+    setExpandedTree((current) => {
+      const currentExpanded = current[key] ?? defaultExpanded;
+      return { ...current, [key]: !currentExpanded };
+    });
   };
 
   const toggleMetricSort = (key: ServerSortKey) => {
@@ -2584,8 +2848,6 @@ export function CloudResourceConsole() {
   const parsedScope = useMemo(() => parseScope(scope), [scope]);
 
   const getAccount = useCallback((accountId: string) => accounts.find((account) => account.id === accountId), [accounts]);
-
-  const getServer = (serverId: string) => servers.find((server) => server.id === serverId);
 
   const selectScope = (nextScope: string) => {
     const nextParsedScope = parseScope(nextScope);
@@ -2677,32 +2939,263 @@ export function CloudResourceConsole() {
     return { online, stale, missing, offline };
   }, [servers]);
 
-  const agentWorkbenchSummary = useMemo(() => {
+  const cloudAlertReminders = useMemo(() => buildCloudAlertReminders(servers), [servers]);
+
+  const cloudAlertSummary = useMemo(() => {
+    const critical = cloudAlertReminders.filter((item) => item.severity === "critical").length;
+    const warning = cloudAlertReminders.filter((item) => item.severity === "warning").length;
+    const info = cloudAlertReminders.filter((item) => item.severity === "info").length;
+    const affectedResources = new Set(cloudAlertReminders.map((item) => item.serverId)).size;
+    return { critical, warning, info, affectedResources };
+  }, [cloudAlertReminders]);
+
+  const alertRuleRows = useMemo(() => {
+    const counts = new Map<string, number>();
+    cloudAlertReminders.forEach((item) => counts.set(item.ruleId, (counts.get(item.ruleId) ?? 0) + 1));
+    return cloudAlertRules.map((rule) => ({ ...rule, activeCount: counts.get(rule.id) ?? 0 }));
+  }, [cloudAlertReminders]);
+
+  const alertCoverageRows = useMemo(() => {
+    const accountMap = new Map(accounts.map((account) => [account.id, account]));
+    const groups = new Map<string, {
+      key: string;
+      provider: Provider;
+      resourceType: ResourceType;
+      accountName: string;
+      total: number;
+      affected: number;
+      critical: number;
+      warning: number;
+    }>();
+    servers.forEach((server) => {
+      const resourceType = getResourceType(server);
+      const key = `${server.provider}:${resourceType}:${server.accountId}`;
+      const account = accountMap.get(server.accountId);
+      const current = groups.get(key) ?? {
+        key,
+        provider: server.provider,
+        resourceType,
+        accountName: account?.name ?? account?.alias ?? "未匹配账号",
+        total: 0,
+        affected: 0,
+        critical: 0,
+        warning: 0,
+      };
+      const reminders = cloudAlertReminders.filter((item) => item.serverId === server.id);
+      current.total += 1;
+      if (reminders.length) current.affected += 1;
+      current.critical += reminders.filter((item) => item.severity === "critical").length;
+      current.warning += reminders.filter((item) => item.severity === "warning").length;
+      groups.set(key, current);
+    });
+    return [...groups.values()].sort((left, right) => {
+      const providerDiff = providerLabels[left.provider].localeCompare(providerLabels[right.provider], "zh-CN");
+      if (providerDiff !== 0) return providerDiff;
+      const typeDiff = resourceTypeLabels[left.resourceType].localeCompare(resourceTypeLabels[right.resourceType], "zh-CN");
+      if (typeDiff !== 0) return typeDiff;
+      return left.accountName.localeCompare(right.accountName, "zh-CN");
+    });
+  }, [accounts, cloudAlertReminders, servers]);
+
+  const agentGovernance = useMemo(() => {
     const total = servers.length;
-    const covered = servers.filter((server) => server.agentStatus === "online" || server.agentStatus === "stale").length;
-    const actionable = servers.filter((server) => server.agentStatus === "stale" || server.agentStatus === "missing").length;
+    const statusCounts = emptyAgentStatusCounter();
+    let covered = 0;
+    let realSampleResourceCount = 0;
     let latestTimestamp = 0;
     let pointCount = 0;
-    const sourceSet = new Set<string>();
+    const sourceMap = new Map<string, AgentSourceSummary>();
+    const accountMap = new Map<string, AgentAccountSummary>();
+    const regionMap = new Map<string, AgentRegionSummary>();
+
     servers.forEach((server) => {
       const overview = overviewByServerId[server.id];
       const snapshot = latestMetricSnapshot(overview);
-      latestTimestamp = Math.max(latestTimestamp, snapshot.latestTimestamp);
-      pointCount += snapshot.pointCount;
-      summarizeMetricSources(overview).forEach((source) => sourceSet.add(source));
+      const resourceType = getResourceType(server);
+      const account = getAccount(server.accountId);
+      const sourceSnapshots = summarizeMetricSourceSnapshots(overview);
+      const sources = sourceSnapshots.map((item) => item.source);
+      const hasRealSample = snapshot.pointCount > 0 && snapshot.latestTimestamp > 0;
+      const hasAvailableSample = server.agentStatus === "online" && hasRealSample;
+
+      statusCounts[server.agentStatus] += 1;
+      if (hasAvailableSample) {
+        covered += 1;
+      }
+      if (hasRealSample) {
+        realSampleResourceCount += 1;
+        latestTimestamp = Math.max(latestTimestamp, snapshot.latestTimestamp);
+        pointCount += snapshot.pointCount;
+      }
+
+      const accountKey = `${server.provider}:${server.accountId}`;
+      const accountRow: AgentAccountSummary = accountMap.get(accountKey) ?? {
+        key: accountKey,
+        provider: server.provider,
+        accountName: account?.name ?? account?.alias ?? server.accountId,
+        total: 0,
+        covered: 0,
+        statusCounts: emptyAgentStatusCounter(),
+        pointCount: 0,
+        latestTimestamp: 0,
+        resourceTypes: [],
+        regionCount: 0,
+        realSampleResourceCount: 0,
+        sources: [],
+        riskCount: 0,
+      };
+      accountRow.total += 1;
+      accountRow.statusCounts[server.agentStatus] += 1;
+      if (hasAvailableSample) {
+        accountRow.covered += 1;
+      }
+      if (hasRealSample) {
+        accountRow.realSampleResourceCount += 1;
+        accountRow.pointCount += snapshot.pointCount;
+        accountRow.latestTimestamp = Math.max(accountRow.latestTimestamp, snapshot.latestTimestamp);
+      }
+      if (server.agentStatus !== "online") accountRow.riskCount += 1;
+      if (!accountRow.resourceTypes.includes(resourceType)) accountRow.resourceTypes.push(resourceType);
+      sources.forEach((source) => {
+        if (!accountRow.sources.includes(source)) accountRow.sources.push(source);
+      });
+      accountMap.set(accountKey, accountRow);
+
+      const regionKey = `${server.provider}:${server.region}`;
+      const regionRow: AgentRegionSummary = regionMap.get(regionKey) ?? {
+        key: regionKey,
+        provider: server.provider,
+        region: server.region,
+        total: 0,
+        covered: 0,
+        statusCounts: emptyAgentStatusCounter(),
+        accountCount: 0,
+        pointCount: 0,
+        latestTimestamp: 0,
+        realSampleResourceCount: 0,
+        riskCount: 0,
+      };
+      regionRow.total += 1;
+      regionRow.statusCounts[server.agentStatus] += 1;
+      if (hasAvailableSample) {
+        regionRow.covered += 1;
+      }
+      if (hasRealSample) {
+        regionRow.realSampleResourceCount += 1;
+        regionRow.pointCount += snapshot.pointCount;
+        regionRow.latestTimestamp = Math.max(regionRow.latestTimestamp, snapshot.latestTimestamp);
+      }
+      if (server.agentStatus !== "online") regionRow.riskCount += 1;
+      regionMap.set(regionKey, regionRow);
+
+      sourceSnapshots.forEach((sourceSnapshot) => {
+        const sourceRow: AgentSourceSummary = sourceMap.get(sourceSnapshot.source) ?? {
+          source: sourceSnapshot.source,
+          resourceCount: 0,
+          pointCount: 0,
+          latestTimestamp: 0,
+          periods: [],
+        };
+        sourceRow.resourceCount += 1;
+        sourceRow.pointCount += sourceSnapshot.pointCount;
+        sourceRow.latestTimestamp = Math.max(sourceRow.latestTimestamp, sourceSnapshot.latestTimestamp);
+        sourceSnapshot.periods.forEach((period) => {
+          if (!sourceRow.periods.includes(period)) sourceRow.periods.push(period);
+        });
+        sourceMap.set(sourceSnapshot.source, sourceRow);
+      });
     });
+
+    const accountRegionSets = new Map<string, Set<string>>();
+    servers.forEach((server) => {
+      const key = `${server.provider}:${server.accountId}`;
+      const current = accountRegionSets.get(key) ?? new Set<string>();
+      current.add(server.region);
+      accountRegionSets.set(key, current);
+    });
+    accountMap.forEach((row) => {
+      row.regionCount = accountRegionSets.get(row.key)?.size ?? 0;
+      row.resourceTypes.sort((left, right) => resourceTypeLabels[left].localeCompare(resourceTypeLabels[right], "zh-CN"));
+      row.sources.sort((left, right) => left.localeCompare(right, "zh-CN"));
+    });
+
+    const regionAccountSets = new Map<string, Set<string>>();
+    servers.forEach((server) => {
+      const key = `${server.provider}:${server.region}`;
+      const current = regionAccountSets.get(key) ?? new Set<string>();
+      current.add(server.accountId);
+      regionAccountSets.set(key, current);
+    });
+    regionMap.forEach((row) => {
+      row.accountCount = regionAccountSets.get(row.key)?.size ?? 0;
+    });
+
+    const accountRows = [...accountMap.values()].sort((left, right) => {
+      if (right.riskCount !== left.riskCount) return right.riskCount - left.riskCount;
+      return left.accountName.localeCompare(right.accountName, "zh-CN");
+    });
+    const regionRows = [...regionMap.values()].sort((left, right) => {
+      if (right.riskCount !== left.riskCount) return right.riskCount - left.riskCount;
+      return `${providerLabels[left.provider]}${left.region}`.localeCompare(`${providerLabels[right.provider]}${right.region}`, "zh-CN");
+    });
+    const sourceRows = [...sourceMap.values()].sort((left, right) => {
+      if (right.resourceCount !== left.resourceCount) return right.resourceCount - left.resourceCount;
+      return left.source.localeCompare(right.source, "zh-CN");
+    });
+
+    const governanceItems: AgentGovernanceItem[] = [];
+    if (realSampleResourceCount === 0) {
+      governanceItems.push({
+        title: "暂无真实监控采样",
+        detail: "当前没有可用于统计的真实采样点，请先确认云账号、地域、权限和云监控接口返回。",
+        status: "missing",
+      });
+    }
+    if (statusCounts.missing > 0) {
+      governanceItems.push({
+        title: "存在未同步资源",
+        detail: `${statusCounts.missing} 个资源尚未形成采样，优先检查账号权限、地域配置和云监控插件状态。`,
+        status: "missing",
+      });
+    }
+    if (statusCounts.stale > 0) {
+      governanceItems.push({
+        title: "存在偏旧采样",
+        detail: `${statusCounts.stale} 个资源最近一轮未拿到新采样，需要关注云监控接口返回和采样周期。`,
+        status: "stale",
+      });
+    }
+    if (statusCounts.offline > 0) {
+      governanceItems.push({
+        title: "存在离线资源",
+        detail: `${statusCounts.offline} 个资源离线，需要结合资源状态判断是否继续纳入监控统计。`,
+        status: "offline",
+      });
+    }
+    if (!governanceItems.length) {
+      governanceItems.push({
+        title: "全局采样状态正常",
+        detail: "当前资源已有可用采样，后续重点保持账号权限和地域配置稳定。",
+        status: "normal",
+      });
+    }
+
     return {
       total,
       covered,
-      actionable,
-      coverageText: formatCoveragePercent(covered, total),
+      actionable: statusCounts.stale + statusCounts.missing,
+      statusCounts,
+      coverageText: formatCoveragePercent(covered, Math.max(1, total)),
+      realSampleResourceCount,
+      hasRealSamples: realSampleResourceCount > 0,
       latestTimestamp,
       pointCount,
-      sources: [...sourceSet],
+      accountRows,
+      regionRows,
+      sourceRows,
+      governanceItems,
     };
-  }, [overviewByServerId, servers]);
-
-  const agentResourceTree = monitorResourceTree;
+  }, [getAccount, overviewByServerId, servers]);
 
   const regionRows = useMemo(() => {
     const map = new Map<string, { provider: Provider; region: string; total: number; abnormal: number; agents: number }>();
@@ -2826,95 +3319,104 @@ export function CloudResourceConsole() {
       {products.map((product) => {
         const productKey = `monitorPicker:product:${product.key}`;
         const productHasSelected = product.rows.some((server) => server.id === selectedServer.id);
-        const productExpanded = typeof expandedTree[productKey] === "boolean" ? expandedTree[productKey] : productHasSelected;
+        const productExpanded = expandedTree[productKey] ?? productHasSelected;
         return (
-          <section className="resource-picker-group" key={product.key}>
-            <button
-              className={productExpanded ? "resource-picker-node product expanded" : "resource-picker-node product"}
-              type="button"
-              onClick={() => {
-                setExpandedTree((current) => {
-                  const currentExpanded = typeof current[productKey] === "boolean" ? current[productKey] : productHasSelected;
-                  return { ...current, [productKey]: !currentExpanded };
-                });
-              }}
-            >
-              <span className="tree-caret" />
-              <div>
-                <strong>{resourceTypeLabels[product.resourceType]}</strong>
-              </div>
-            </button>
+          <div className="tree-group" key={product.key}>
+            <div className="tree-line">
+              <button className={productExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(productKey, productHasSelected)} aria-label={productExpanded ? "收起产品" : "展开产品"}>
+                <span className="tree-caret" />
+              </button>
+              <button
+                className="tree-node product"
+                type="button"
+                onClick={() => toggleTreeNode(productKey, productHasSelected)}
+              >
+                <span className="tree-label">{resourceTypeLabels[product.resourceType]}</span>
+              </button>
+            </div>
             {productExpanded
               ? product.providers.map((providerNode) => {
                   const providerKey = `monitorPicker:provider:${providerNode.key}`;
                   const providerHasSelected = providerNode.rows.some((server) => server.id === selectedServer.id);
-                  const providerExpanded = typeof expandedTree[providerKey] === "boolean" ? expandedTree[providerKey] : providerHasSelected;
+                  const providerExpanded = expandedTree[providerKey] ?? providerHasSelected;
                   return (
-                    <div className="resource-picker-branch provider" key={providerNode.key}>
-                      <button
-                        className={providerExpanded ? "resource-picker-node provider expanded" : "resource-picker-node provider"}
-                        type="button"
-                        onClick={() => {
-                          setExpandedTree((current) => {
-                            const currentExpanded = typeof current[providerKey] === "boolean" ? current[providerKey] : providerHasSelected;
-                            return { ...current, [providerKey]: !currentExpanded };
-                          });
-                        }}
-                      >
-                        <span className="tree-caret" />
-                        <div>
-                          <strong>{providerLabels[providerNode.provider]}</strong>
-                        </div>
-                      </button>
+                    <div className="provider-branch" key={providerNode.key}>
+                      <div className="tree-line">
+                        <button className={providerExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(providerKey, providerHasSelected)} aria-label={providerExpanded ? "收起云平台" : "展开云平台"}>
+                          <span className="tree-caret" />
+                        </button>
+                        <button
+                          className="tree-node provider"
+                          type="button"
+                          onClick={() => toggleTreeNode(providerKey, providerHasSelected)}
+                        >
+                          <span className="tree-label">{providerLabels[providerNode.provider]}</span>
+                        </button>
+                      </div>
                       {providerExpanded
                         ? providerNode.accounts.map((accountNode) => {
                             const accountKey = `monitorPicker:account:${accountNode.key}`;
                             const accountHasSelected = accountNode.rows.some((server) => server.id === selectedServer.id);
-                            const accountExpanded = typeof expandedTree[accountKey] === "boolean" ? expandedTree[accountKey] : accountHasSelected;
+                            const accountExpanded = expandedTree[accountKey] ?? accountHasSelected;
                             return (
-                              <div className="resource-picker-branch account" key={accountNode.key}>
-                                <button
-                                  className={accountExpanded ? "resource-picker-node account expanded" : "resource-picker-node account"}
-                                  type="button"
-                                  onClick={() => {
-                                    setExpandedTree((current) => {
-                                      const currentExpanded = typeof current[accountKey] === "boolean" ? current[accountKey] : accountHasSelected;
-                                      return { ...current, [accountKey]: !currentExpanded };
-                                    });
-                                  }}
-                                >
-                                  <span className="tree-caret" />
-                                  <div>
-                                    <strong>{accountNode.accountName}</strong>
-                                  </div>
-                                </button>
-                                {accountExpanded ? <div className="resource-picker-list">
-                                  {accountNode.rows.map((server) => {
-                                    const isSelected = selectedServer.id === server.id;
-                                    return (
-                                      <button
-                                        className={[
-                                          "resource-picker-item",
-                                          activePage === "agents" ? "with-state" : "",
-                                          isSelected ? "selected" : "",
-                                        ].filter(Boolean).join(" ")}
-                                        type="button"
-                                        key={server.id}
-                                        onClick={() => setSelectedServerId(server.id)}
-                                      >
-                                        <span className="resource-picker-main">
-                                          <strong>{server.name}</strong>
-                                          {activePage === "agents" ? <em>{server.instanceId} / {server.region}</em> : null}
-                                        </span>
-                                        {activePage === "agents" ? (
-                                          <span className="resource-picker-state">
-                                            <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText>
-                                          </span>
-                                        ) : null}
-                                      </button>
-                                    );
-                                  })}
-                                </div> : null}
+                              <div className="account-branch" key={accountNode.key}>
+                                <div className="tree-line">
+                                  <button className={accountExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(accountKey, accountHasSelected)} aria-label={accountExpanded ? "收起账号" : "展开账号"}>
+                                    <span className="tree-caret" />
+                                  </button>
+                                  <button
+                                    className="tree-node account"
+                                    type="button"
+                                    onClick={() => toggleTreeNode(accountKey, accountHasSelected)}
+                                  >
+                                    <span className="tree-label">{accountNode.accountName}</span>
+                                  </button>
+                                </div>
+                                {accountExpanded
+                                  ? [...new Set(accountNode.rows.map((server) => server.region))].map((region) => {
+                                      const regionKey = `monitorPicker:region:${accountNode.key}:${region}`;
+                                      const regionRows = accountNode.rows.filter((server) => server.region === region);
+                                      const regionHasSelected = regionRows.some((server) => server.id === selectedServer.id);
+                                      const regionExpanded = expandedTree[regionKey] ?? regionHasSelected;
+                                      return (
+                                        <div className="region-branch" key={`${accountNode.key}:${region}`}>
+                                          <div className="tree-line">
+                                            <button className={regionExpanded ? "tree-toggle expanded" : "tree-toggle"} type="button" onClick={() => toggleTreeNode(regionKey, regionHasSelected)} aria-label={regionExpanded ? "收起地域" : "展开地域"}>
+                                              <span className="tree-caret" />
+                                            </button>
+                                            <button
+                                              className="tree-node region"
+                                              type="button"
+                                              onClick={() => toggleTreeNode(regionKey, regionHasSelected)}
+                                            >
+                                              <span className="tree-label">{region}</span>
+                                            </button>
+                                          </div>
+                                          {regionExpanded
+                                            ? regionRows.map((server) => {
+                                                const isSelected = selectedServer.id === server.id;
+                                                return (
+                                                  <button
+                                                    className={[
+                                                      "tree-node",
+                                                      "server",
+                                                      activePage === "agents" ? "with-state" : "",
+                                                      isSelected ? "active" : "",
+                                                    ].filter(Boolean).join(" ")}
+                                                    type="button"
+                                                    key={server.id}
+                                                    onClick={() => setSelectedServerId(server.id)}
+                                                  >
+                                                    <span className="tree-label">{server.name}</span>
+                                                    {activePage === "agents" ? <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText> : null}
+                                                  </button>
+                                                );
+                                              })
+                                            : null}
+                                        </div>
+                                      );
+                                    })
+                                  : null}
                               </div>
                             );
                           })
@@ -2923,7 +3425,7 @@ export function CloudResourceConsole() {
                   );
                 })
               : null}
-          </section>
+          </div>
         );
       })}
       {!products.length ? <div className="empty-card">{emptyText}</div> : null}
@@ -3021,8 +3523,7 @@ export function CloudResourceConsole() {
                                                   className={selectedServer.id === server.id ? "tree-node server active" : "tree-node server"}
                                                   key={server.id}
                                                   onClick={() => {
-                                                    selectScope(buildScopeKey("productAccountRegion", `${resourceType}:${provider}:${account.id}:${region}`));
-                                                    setSelectedServerId(server.id);
+                                                    selectScope(buildScopeKey("server", server.id));
                                                   }}
                                                 >
                                                   <span className="tree-label">{server.name}</span>
@@ -3401,29 +3902,30 @@ export function CloudResourceConsole() {
   };
 
   const renderAgentsPage = () => {
-    const selectedOverview = overviewByServerId[selectedServer.id];
-    const selectedSnapshot = latestMetricSnapshot(selectedOverview);
-    const selectedFreshness = resolveOverviewFreshness(selectedOverview);
-    const selectedAccountForAgent = getAccount(selectedServer.accountId);
-    const selectedSources = summarizeMetricSources(selectedOverview);
-    const selectedSeriesRows = collectMetricSeries(selectedOverview)
-      .filter((series) => hasMetricPoint(series))
-      .sort((left, right) => (left.label || left.metricName).localeCompare(right.label || right.metricName, "zh-CN"))
-      .slice(0, 6);
-    const latestAgeText = selectedSnapshot.latestTimestamp ? formatAgeText(Date.now() - selectedSnapshot.latestTimestamp) : "";
-    const statusCounts: Record<AgentStatus, number> = {
-      online: monitorSummary.online,
-      stale: monitorSummary.stale,
-      missing: monitorSummary.missing,
-      offline: monitorSummary.offline,
-    };
+    if (USE_MOCK) {
+      return (
+        <section className="page-main-section">
+          <div className="agent-command-panel">
+            <div className="agent-command-copy">
+              <span>探针治理</span>
+              <strong>看全局接入覆盖、采样质量和监控缺口</strong>
+              <p>连接真实云账号后展示监控采样统计。</p>
+            </div>
+          </div>
+          <section className="agent-governance-panel">
+            <div className="agent-empty-state">暂无真实云账号数据</div>
+          </section>
+        </section>
+      );
+    }
+
     return (
       <section className="page-main-section">
         <div className="agent-command-panel">
           <div className="agent-command-copy">
-            <span>探针工作台</span>
-            <strong>把接入覆盖、采样新鲜度和数据来源放在同一张视图里</strong>
-            <p>当前探针口径复用云监控和性能采样，先判断资源是否形成连续数据，再定位需要补采样或恢复同步的对象。</p>
+            <span>探针治理</span>
+            <strong>看全局接入覆盖、采样质量和监控缺口</strong>
+            <p>汇总真实监控采样，按账号、地域和采样来源查看接入覆盖与质量。</p>
           </div>
           <div className="agent-command-actions">
             <span>{refreshSummary} / 最近同步 {lastSyncAt}</span>
@@ -3434,30 +3936,30 @@ export function CloudResourceConsole() {
         </div>
         <div className="agent-overview-grid">
           <article className="agent-overview-card primary">
-            <span>采样覆盖率</span>
-            <strong>{agentWorkbenchSummary.coverageText}</strong>
-            <em>{formatCompactNumber(agentWorkbenchSummary.covered)} / {formatCompactNumber(agentWorkbenchSummary.total)} 个资源已有采样</em>
+            <span>可用采样覆盖率</span>
+            <strong>{agentGovernance.coverageText}</strong>
+            <em>{agentGovernance.hasRealSamples ? `${formatCompactNumber(agentGovernance.covered)} / ${formatCompactNumber(agentGovernance.total)} 个资源最新可用` : "暂无真实采样"}</em>
           </article>
           <article className="agent-overview-card">
-            <span>待处理资源</span>
-            <strong>{formatCompactNumber(agentWorkbenchSummary.actionable)}</strong>
-            <em>数据异常与未同步优先排查</em>
+            <span>治理待处理</span>
+            <strong>{formatCompactNumber(agentGovernance.actionable)}</strong>
+            <em>数据异常与未同步进入治理清单</em>
           </article>
           <article className="agent-overview-card">
-            <span>采样点总数</span>
-            <strong>{formatCompactNumber(agentWorkbenchSummary.pointCount)}</strong>
-            <em>最近 30 分钟窗口</em>
+            <span>真实采样点</span>
+            <strong>{agentGovernance.hasRealSamples ? formatCompactNumber(agentGovernance.pointCount) : "--"}</strong>
+            <em>{agentGovernance.hasRealSamples ? "最近 30 分钟窗口" : "暂无真实采样"}</em>
           </article>
           <article className="agent-overview-card">
             <span>最近采样</span>
-            <strong>{agentWorkbenchSummary.latestTimestamp ? formatMetricShortTime(agentWorkbenchSummary.latestTimestamp) : "--"}</strong>
-            <em>{agentWorkbenchSummary.latestTimestamp ? formatMetricTime(agentWorkbenchSummary.latestTimestamp) : "暂无全局采样"}</em>
+            <strong>{agentGovernance.latestTimestamp ? formatMetricShortTime(agentGovernance.latestTimestamp) : "--"}</strong>
+            <em>{agentGovernance.latestTimestamp ? formatMetricTime(agentGovernance.latestTimestamp) : "暂无真实采样"}</em>
           </article>
         </div>
         <div className="agent-status-lanes">
           {agentStatusOrder.map((status) => {
-            const count = statusCounts[status];
-            const percent = formatCoveragePercent(count, Math.max(1, agentWorkbenchSummary.total));
+            const count = agentGovernance.statusCounts[status];
+            const percent = formatCoveragePercent(count, Math.max(1, agentGovernance.total));
             return (
               <article className={`agent-status-lane agent-status-lane-${status}`} key={status}>
                 <div>
@@ -3470,70 +3972,89 @@ export function CloudResourceConsole() {
             );
           })}
         </div>
-        <div className="monitor-workspace agent-workspace">
-          <aside className="monitor-resource-pane">
-            <div className="workspace-pane-title">
-              <strong>探针资源</strong>
-              <span>按产品、云平台和账号定位采样状态</span>
+        <div className="agent-governance-grid">
+          <section className="agent-governance-panel agent-governance-panel-wide">
+            <div className="agent-panel-title">
+              <strong>治理提醒</strong>
+              <span>从全局角度判断下一步该先补哪里</span>
             </div>
-            {renderResourcePicker(agentResourceTree, "当前没有可展示的探针资源")}
-          </aside>
-          <section className="detail-panel agent-detail-panel">
-            <div className="section-title monitor-overview-title">
-              <div>
-                <h3>{selectedServer.name}</h3>
-                <span>{describeAgentResource(selectedServer)} / {selectedServer.instanceId}</span>
-              </div>
-              <StatusText status={selectedServer.agentStatus}>{agentStatusLabels[selectedServer.agentStatus]}</StatusText>
+            <div className="agent-governance-list">
+              {agentGovernance.governanceItems.map((item) => (
+                <article className="agent-governance-item" key={`${item.status}:${item.title}`}>
+                  <StatusText status={item.status}>{item.status === "normal" ? "正常" : agentStatusLabels[item.status]}</StatusText>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.detail}</span>
+                  </div>
+                </article>
+              ))}
             </div>
-            <div className="agent-evidence-strip">
-              <span><b>采样来源</b>{selectedSources.length ? selectedSources.join("、") : "暂无可用采样来源"}</span>
-              <span><b>最近采样</b>{selectedSnapshot.latestTimestamp ? `${formatMetricTime(selectedSnapshot.latestTimestamp)}${latestAgeText ? `（${latestAgeText}前）` : ""}` : "--"}</span>
-              <span><b>采样周期</b>{selectedSnapshot.periodSeconds ? `${selectedSnapshot.periodSeconds}s` : "--"}</span>
-              <span><b>采样点数</b>{formatCompactNumber(selectedSnapshot.pointCount)}</span>
+          </section>
+          <section className="agent-governance-panel">
+            <div className="agent-panel-title">
+              <strong>账号覆盖</strong>
+              <span>按云账号查看采样覆盖和缺口</span>
             </div>
-            <div className="agent-detail-layout">
-              <div className="agent-health-panel">
-                <div>
-                  <span>当前判断</span>
-                  <strong>{agentStatusLabels[selectedServer.agentStatus]}</strong>
-                  <p>{selectedFreshness.message}</p>
-                </div>
-                <dl>
-                  <div><dt>云平台 / 账号</dt><dd>{providerLabels[selectedServer.provider]} / {selectedAccountForAgent?.name ?? "--"}</dd></div>
-                  <div><dt>地域 / 可用区</dt><dd>{selectedServer.region} / {selectedServer.zone}</dd></div>
-                  <div><dt>资源类型</dt><dd>{resourceTypeLabels[getResourceType(selectedServer)]}</dd></div>
-                  <div><dt>资源状态</dt><dd>{serverStatusLabels[selectedServer.status]} / {selectedServer.lastSeen}</dd></div>
-                </dl>
-              </div>
-              <div className="agent-source-panel">
-                <div className="agent-panel-title">
-                  <strong>采样证据</strong>
-                  <span>展示最近有数据的指标来源</span>
-                </div>
-                <div className="agent-source-list">
-                  {selectedSeriesRows.map((series) => {
-                    const latest = latestPoint(series.points);
-                    const label = series.label || [series.metricName, series.subKey].filter(Boolean).join(" / ");
-                    return (
-                      <article className="agent-source-row" key={`${series.metricName}:${series.subKey ?? ""}:${label}`}>
-                        <div>
-                          <strong>{label}</strong>
-                          <span>{metricSourceLabel(series)} / {series.period ? `${series.period}s` : "--"}</span>
-                        </div>
-                        <AgentMiniSparkline points={series.points ?? []} />
-                        <em>{latest ? formatMetricShortTime(latest.timestamp) : "--"}</em>
-                      </article>
-                    );
-                  })}
-                  {!selectedSeriesRows.length ? (
-                    <div className="agent-source-empty">
-                      <strong>暂无采样证据</strong>
-                      <span>{selectedFreshness.message}</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+            <div className="agent-summary-list">
+              {agentGovernance.accountRows.slice(0, 6).map((row) => (
+                <article className="agent-summary-row" key={row.key}>
+                  <div>
+                    <strong>{row.accountName}</strong>
+                    <span>{providerLabels[row.provider]} / {row.regionCount} 个地域 / {row.resourceTypes.map((type) => resourceTypeLabels[type]).join("、")}</span>
+                  </div>
+                  <div className="agent-summary-metrics">
+                    <span><b>{formatCoveragePercent(row.covered, row.total)}</b>覆盖</span>
+                    <span><b>{row.riskCount}</b>待处理</span>
+                    <span><b>{row.pointCount ? formatCompactNumber(row.pointCount) : "--"}</b>真实采样</span>
+                  </div>
+                  <div className="agent-progress-track">
+                    <i style={{ width: formatCoveragePercent(row.covered, row.total) }} />
+                  </div>
+                </article>
+              ))}
+              {!agentGovernance.accountRows.length ? <div className="agent-empty-state">暂无云账号资源</div> : null}
+            </div>
+          </section>
+          <section className="agent-governance-panel">
+            <div className="agent-panel-title">
+              <strong>地域缺口</strong>
+              <span>按地域看采样覆盖和风险集中度</span>
+            </div>
+            <div className="agent-summary-list">
+              {agentGovernance.regionRows.slice(0, 6).map((row) => (
+                <article className="agent-summary-row" key={row.key}>
+                  <div>
+                    <strong>{row.region}</strong>
+                    <span>{providerLabels[row.provider]} / {row.accountCount} 个账号 / {row.total} 个资源</span>
+                  </div>
+                  <div className="agent-summary-metrics">
+                    <span><b>{formatCoveragePercent(row.covered, row.total)}</b>覆盖</span>
+                    <span><b>{row.riskCount}</b>待处理</span>
+                    <span><b>{row.latestTimestamp ? formatMetricShortTime(row.latestTimestamp) : "--"}</b>最近</span>
+                  </div>
+                  <div className="agent-progress-track">
+                    <i style={{ width: formatCoveragePercent(row.covered, row.total) }} />
+                  </div>
+                </article>
+              ))}
+              {!agentGovernance.regionRows.length ? <div className="agent-empty-state">暂无地域资源</div> : null}
+            </div>
+          </section>
+          <section className="agent-governance-panel agent-governance-panel-wide">
+            <div className="agent-panel-title">
+              <strong>采样来源质量</strong>
+              <span>看监控数据来自哪里，以及是否形成稳定采样</span>
+            </div>
+            <div className="agent-source-grid">
+              {agentGovernance.sourceRows.map((row) => (
+                <article className="agent-source-card" key={row.source}>
+                  <span>{row.source}</span>
+                  <strong>{formatCompactNumber(row.resourceCount)} 个资源</strong>
+                  <em>{formatCompactNumber(row.pointCount)} 个真实采样 / {row.periods.length ? row.periods.join("、") : "周期未知"}</em>
+                  <small>{row.latestTimestamp ? `最近 ${formatMetricShortTime(row.latestTimestamp)}` : "暂无真实采样"}</small>
+                </article>
+              ))}
+              {!agentGovernance.sourceRows.length ? <div className="agent-empty-state">暂无真实采样来源</div> : null}
             </div>
           </section>
         </div>
@@ -3542,38 +4063,150 @@ export function CloudResourceConsole() {
   };
 
   const renderEventsPage = () => (
-    <section className="page-main-section">
-      <div className="table-panel">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>类型</th>
-              <th>级别</th>
-              <th>资源</th>
-              <th>账号 / 地域</th>
-              <th>内容</th>
-              <th>状态</th>
-            </tr>
-          </thead>
-          <tbody>
-            {events.map((event) => {
-              const server = getServer(event.serverId);
-              const account = server ? getAccount(server.accountId) : undefined;
-              return (
-                <tr key={event.id}>
-                  <td>{event.time}</td>
-                  <td>{event.type}</td>
-                  <td><StatusText status={event.level}>{event.level}</StatusText></td>
-                  <td>{server?.name ?? "--"}</td>
-                  <td>{account?.alias ?? "--"} / {server?.region ?? "--"}</td>
-                  <td>{event.message}</td>
-                  <td>{event.status}</td>
+    <section className="page-main-section alert-management-page">
+      <div className="alert-management-topline">
+        <div className="monitor-stat-strip alert-stat-strip">
+          <span><b>严重提醒</b>{cloudAlertSummary.critical}</span>
+          <span><b>预警提醒</b>{cloudAlertSummary.warning}</span>
+          <span><b>提示提醒</b>{cloudAlertSummary.info}</span>
+          <span><b>影响资源</b>{cloudAlertSummary.affectedResources}</span>
+        </div>
+        <div className="monitor-refresh-panel">
+          <span>{refreshSummary}</span>
+          <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>
+            {assetLoading ? "刷新中" : "刷新告警数据"}
+          </button>
+        </div>
+      </div>
+
+      <section className="detail-panel">
+        <div className="section-title">
+          <h3>云产品提醒</h3>
+          <span>基于当前接入的云产品状态、监控采样和到期信息生成提醒</span>
+        </div>
+        <div className="table-panel">
+          <table className="data-table cloud-alert-table">
+            <colgroup>
+              <col className="alert-severity-col" />
+              <col className="alert-resource-col" />
+              <col className="alert-account-col" />
+              <col className="alert-metric-col" />
+              <col className="alert-message-col" />
+              <col className="alert-suggestion-col" />
+              <col className="alert-time-col" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>级别</th>
+                <th>资源</th>
+                <th>云平台 / 账号 / 地域</th>
+                <th>指标 / 当前值</th>
+                <th>提醒内容</th>
+                <th>建议动作</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cloudAlertReminders.map((reminder) => {
+                const account = getAccount(reminder.accountId);
+                return (
+                  <tr key={reminder.id}>
+                    <td><StatusText status={reminder.severity}>{alertSeverityLabels[reminder.severity]}</StatusText></td>
+                    <td className="server-name-cell">
+                      <strong>{reminder.resourceName}</strong>
+                      <span>{resourceTypeLabels[reminder.resourceType]} / {reminder.instanceId}</span>
+                    </td>
+                    <td className="account-cell">
+                      <strong>{providerLabels[reminder.provider]}</strong>
+                      <span>{account?.alias ?? "--"} / {reminder.region}</span>
+                    </td>
+                    <td>
+                      <strong>{reminder.metric}</strong>
+                      <span>{reminder.currentValue}</span>
+                      <span>{reminder.condition}</span>
+                    </td>
+                    <td>{reminder.message}</td>
+                    <td>{reminder.suggestion}</td>
+                    <td>{reminder.updatedAt}</td>
+                  </tr>
+                );
+              })}
+              {!cloudAlertReminders.length ? (
+                <tr>
+                  <td className="empty-cell" colSpan={7}>当前接入云产品没有命中提醒规则</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="alert-management-grid">
+        <section className="detail-panel">
+          <div className="section-title">
+            <h3>规则设置</h3>
+            <span>先展示默认规则与命中数量，后续可扩展为可编辑阈值和通知渠道</span>
+          </div>
+          <div className="alert-rule-list">
+            {alertRuleRows.map((rule) => (
+              <article className="alert-rule-item" key={rule.id}>
+                <div className="alert-rule-item-head">
+                  <div>
+                    <strong>{rule.title}</strong>
+                    <span>{rule.metric} / {rule.condition}</span>
+                  </div>
+                  <StatusText status={rule.enabled ? rule.severity : "disabled"}>
+                    {rule.enabled ? alertSeverityLabels[rule.severity] : "停用"}
+                  </StatusText>
+                </div>
+                <div className="alert-rule-item-meta">
+                  <span><b>覆盖产品</b>{rule.resourceTypes.map((type) => resourceTypeLabels[type]).join("、")}</span>
+                  <span><b>云平台</b>{rule.providers.map((provider) => providerLabels[provider]).join("、")}</span>
+                  <span><b>提醒渠道</b>{rule.notifyChannels.join("、")}</span>
+                  <span><b>当前命中</b>{rule.activeCount}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="detail-panel">
+          <div className="section-title">
+            <h3>覆盖情况</h3>
+            <span>按云产品、云账号聚合当前规则覆盖和提醒数量</span>
+          </div>
+          <div className="table-panel">
+            <table className="data-table alert-coverage-table">
+              <thead>
+                <tr>
+                  <th>云平台</th>
+                  <th>产品</th>
+                  <th>账号</th>
+                  <th>资源数</th>
+                  <th>影响资源</th>
+                  <th>严重 / 预警</th>
+                </tr>
+              </thead>
+              <tbody>
+                {alertCoverageRows.map((row) => (
+                  <tr key={row.key}>
+                    <td>{providerLabels[row.provider]}</td>
+                    <td>{resourceTypeLabels[row.resourceType]}</td>
+                    <td>{row.accountName}</td>
+                    <td>{row.total}</td>
+                    <td>{row.affected}</td>
+                    <td>{row.critical} / {row.warning}</td>
+                  </tr>
+                ))}
+                {!alertCoverageRows.length ? (
+                  <tr>
+                    <td className="empty-cell" colSpan={6}>暂无可覆盖的云资源</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -3736,7 +4369,7 @@ export function CloudResourceConsole() {
         <header className="admin-header">
           <div>
             <h1>{getPageTitle(activePage)}</h1>
-            <p>当前先收口阿里云 ECS/RDS 与华为云 ECS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
+            <p>当前先做好阿里云 ECS/RDS 与华为云 ECS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
           </div>
           <div className="header-meta">
             <span>{USE_MOCK ? "当前为前端样例数据" : "当前为真实云账号数据"}</span>

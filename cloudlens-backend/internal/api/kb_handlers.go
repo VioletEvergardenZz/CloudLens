@@ -24,7 +24,7 @@ import (
 )
 
 // kbArticles 统一处理知识库列表查询与新增
-// GET/POST 共用一个入口便于保持参数口径和错误返回一致
+// GET/POST 共用一个入口便于保持参数处理和错误返回一致
 func (h *handler) kbArticles(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)

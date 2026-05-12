@@ -368,7 +368,7 @@ export function KnowledgeConsole() {
   const canArchive = !!selectedDetail && selectedDetail.status !== "archived";
 
   // loadArticles 是列表主刷新函数
-  // 所有筛选条件最终都汇聚到这里 便于统一维护请求参数口径
+  // 所有筛选条件最终都汇聚到这里 便于统一维护请求参数处理规则
   const loadArticles = useCallback(async () => {
     setLoading(true);
     setError(null);

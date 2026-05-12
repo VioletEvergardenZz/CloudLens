@@ -403,7 +403,7 @@ export function EventWorkbench({ onViewChange }: EventWorkbenchProps) {
             <div className="section-title">
               <div>
                 <h2>事件时间线</h2>
-                <span>把关键节点留在详情页里，不再散落到多个模块</span>
+                <span>把关键节点留在详情页里，方便连续处理</span>
               </div>
             </div>
             <div className="event-timeline-list">
