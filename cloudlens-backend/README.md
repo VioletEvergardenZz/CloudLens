@@ -100,3 +100,15 @@ go build -o bin/cloudlens-server ./cmd
 ```bash
 go test ./... -count=1
 ```
+
+主线接口轻量回归：
+
+```bash
+scripts/ops/cloud-mainline-check.sh --base-url http://localhost:8082 --output-file ../reports/cloud-mainline-check-$(date +%F).json
+```
+
+华为云真实账号回归：
+
+```bash
+scripts/ops/huawei-real-account-check.sh --base-url http://localhost:8082 --output-file ../reports/huawei-real-account-check-$(date +%F).json
+```

@@ -61,7 +61,7 @@ type cloudAccountUpsert struct {
 	Provider        string   `json:"provider"`
 	AccessKeyID     string   `json:"accessKeyId"`
 	AccessKeySecret string   `json:"accessKeySecret"`
-	ProjectID       string   `json:"projectId"`
+	ProjectID       *string  `json:"projectId"`
 	Regions         []string `json:"regions"`
 	MetricPeriod    string   `json:"metricPeriod"`
 	Enabled         *bool    `json:"enabled"`
@@ -191,7 +191,7 @@ func (s *cloudAccountStore) Create(input cloudAccountUpsert) (*cloudAccountRecor
 		strings.TrimSpace(input.Name),
 		strings.TrimSpace(input.AccessKeyID),
 		secretCipher,
-		strings.TrimSpace(input.ProjectID),
+		cloudOptionalString(input.ProjectID),
 		regionsJSON,
 		normalizeMetricPeriod(input.MetricPeriod),
 		boolToInt(enabled),
@@ -251,9 +251,9 @@ func (s *cloudAccountStore) Update(id int64, input cloudAccountUpsert) (*cloudAc
 	if accessKeyID == "" {
 		accessKeyID = current.AccessKeyID
 	}
-	projectID := strings.TrimSpace(input.ProjectID)
-	if projectID == "" {
-		projectID = current.ProjectID
+	projectID := current.ProjectID
+	if input.ProjectID != nil {
+		projectID = cloudOptionalString(input.ProjectID)
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -622,6 +622,13 @@ func normalizeMetricPeriod(period string) string {
 		return "60"
 	}
 	return trimmed
+}
+
+func cloudOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func parseCloudStringList(raw string) []string {

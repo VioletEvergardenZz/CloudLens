@@ -14,13 +14,14 @@ func TestCloudAccountStoreSupportsHuaweiProvider(t *testing.T) {
 		t.Fatalf("初始化云账号存储失败: %v", err)
 	}
 	defer store.Close()
+	projectID := "project-cn-north-4"
 
 	account, err := store.Create(cloudAccountUpsert{
 		Provider:        "huawei",
 		Name:            "华为云测试账号",
 		AccessKeyID:     "huawei-ak",
 		AccessKeySecret: "huawei-secret",
-		ProjectID:       "project-cn-north-4",
+		ProjectID:       &projectID,
 		Regions:         []string{"cn-north-4"},
 		MetricPeriod:    "60",
 	})
@@ -61,6 +62,7 @@ func TestCloudAccountStoreSwitchProviderRequiresCredentials(t *testing.T) {
 		t.Fatalf("初始化云账号存储失败: %v", err)
 	}
 	defer store.Close()
+	projectID := "project-cn-north-4"
 
 	account, err := store.Create(cloudAccountUpsert{
 		Provider:        "aliyun",
@@ -82,7 +84,7 @@ func TestCloudAccountStoreSwitchProviderRequiresCredentials(t *testing.T) {
 		Provider:        "huawei",
 		AccessKeyID:     "huawei-ak",
 		AccessKeySecret: "huawei-secret",
-		ProjectID:       "project-cn-north-4",
+		ProjectID:       &projectID,
 		Regions:         []string{"cn-north-4"},
 	})
 	if err != nil {
@@ -101,5 +103,47 @@ func TestCloudAccountStoreSwitchProviderRequiresCredentials(t *testing.T) {
 	}
 	if cfg.ProjectID != "project-cn-north-4" {
 		t.Fatalf("切换后的华为云 ProjectID 不符合预期: %s", cfg.ProjectID)
+	}
+}
+
+func TestCloudAccountStoreUpdateCanClearHuaweiProjectID(t *testing.T) {
+	store, err := newCloudAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("初始化云账号存储失败: %v", err)
+	}
+	defer store.Close()
+
+	projectID := "project-cn-south-1"
+	account, err := store.Create(cloudAccountUpsert{
+		Provider:        "huawei",
+		Name:            "华为云测试账号",
+		AccessKeyID:     "huawei-ak",
+		AccessKeySecret: "huawei-secret",
+		ProjectID:       &projectID,
+		Regions:         []string{"cn-south-1"},
+		MetricPeriod:    "60",
+	})
+	if err != nil {
+		t.Fatalf("创建华为云账号失败: %v", err)
+	}
+
+	emptyProjectID := ""
+	updated, err := store.Update(account.ID, cloudAccountUpsert{
+		Provider:  "huawei",
+		ProjectID: &emptyProjectID,
+	})
+	if err != nil {
+		t.Fatalf("清空 ProjectID 失败: %v", err)
+	}
+	if updated.ProjectID != "" {
+		t.Fatalf("ProjectID 应允许清空，实际: %s", updated.ProjectID)
+	}
+
+	cfg, _, err := store.HuaweiConfig(account.ID)
+	if err != nil {
+		t.Fatalf("读取华为云配置失败: %v", err)
+	}
+	if cfg.ProjectID != "" {
+		t.Fatalf("清空后配置中的 ProjectID 应为空，实际: %s", cfg.ProjectID)
 	}
 }
