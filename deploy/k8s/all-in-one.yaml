@@ -1,0 +1,283 @@
+# 单文件快速启动入口；正式维护时优先看同目录下的拆分清单和 kustomization.yaml。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudlens
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudlens-backend-config
+  namespace: cloudlens
+data:
+  config.yaml: |
+    # Kubernetes 部署场景下的最小静态配置。
+    # 云账号凭据通过 Secret 注入环境变量，运行态配置写入同目录的 config.runtime.yaml。
+    watch_dir: ""
+    watch_exclude: ""
+    file_ext: ""
+    silence: "10s"
+
+    log_level: "info"
+    log_file: "logs/file-monitor.log"
+    log_to_std: true
+    log_show_caller: false
+
+    api_bind: ":8080"
+    api_cors_origins: "${API_CORS_ORIGINS}"
+
+    cloud_assets_enabled: true
+    system_resource_enabled: false
+
+    aliyun_access_key_id: "${ALIYUN_ACCESS_KEY_ID}"
+    aliyun_access_key_secret: "${ALIYUN_ACCESS_KEY_SECRET}"
+    aliyun_region: "${ALIYUN_REGION}"
+    aliyun_regions: "${ALIYUN_REGIONS}"
+    aliyun_metric_period: "${ALIYUN_METRIC_PERIOD}"
+
+    huawei_access_key_id: "${HUAWEI_ACCESS_KEY_ID}"
+    huawei_access_key_secret: "${HUAWEI_ACCESS_KEY_SECRET}"
+    huawei_project_id: "${HUAWEI_PROJECT_ID}"
+    huawei_region: "${HUAWEI_REGION}"
+    huawei_regions: "${HUAWEI_REGIONS}"
+    huawei_metric_period: "${HUAWEI_METRIC_PERIOD}"
+
+    alert_enabled: false
+    alert_suppress_enabled: true
+    alert_log_paths: ""
+    alert_poll_interval: "2s"
+    alert_start_from_end: true
+
+    ai_enabled: false
+    ai_base_url: "${AI_BASE_URL}"
+    ai_api_key: "${AI_API_KEY}"
+    ai_model: "${AI_MODEL}"
+    ai_timeout: "${AI_TIMEOUT}"
+    ai_max_lines: 200
+
+    bucket: ""
+    ak: "${OSS_AK}"
+    sk: "${OSS_SK}"
+    endpoint: ""
+    region: ""
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloudlens-backend-data
+  namespace: cloudlens
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudlens-backend
+  namespace: cloudlens
+  labels:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: backend
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8080"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudlens-frontend
+  namespace: cloudlens
+  labels:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudlens-backend
+  namespace: cloudlens
+  labels:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: backend
+spec:
+  # 当前后端使用本地 SQLite，先保持单副本，避免多个 Pod 同时写同一份数据库。
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudlens
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudlens
+        app.kubernetes.io/component: backend
+    spec:
+      initContainers:
+        - name: prepare-runtime-dirs
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - mkdir -p /runtime/config /runtime/data /runtime/logs
+          volumeMounts:
+            - name: backend-data
+              mountPath: /runtime
+      containers:
+        - name: backend
+          image: cloudlens-backend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: API_CORS_ORIGINS
+              value: "*"
+            - name: CONTROL_DATA_DIR
+              value: /app/data/control
+            - name: CLOUD_DATA_DIR
+              value: /app/data/cloud
+            - name: KB_DATA_DIR
+              value: /app/data/kb
+            - name: ALERT_SOURCE_MIRROR_ROOT
+              value: /app/logs/alert-sources
+            - name: ALIYUN_REGION
+              value: cn-hangzhou
+            - name: ALIYUN_REGIONS
+              value: cn-hangzhou
+            - name: ALIYUN_METRIC_PERIOD
+              value: "60"
+            - name: HUAWEI_REGION
+              value: cn-south-1
+            - name: HUAWEI_REGIONS
+              value: cn-south-1
+            - name: HUAWEI_METRIC_PERIOD
+              value: "60"
+            - name: AI_BASE_URL
+              value: https://api.openai.com/v1
+            - name: AI_MODEL
+              value: gpt-4o-mini
+            - name: AI_TIMEOUT
+              value: 20s
+          envFrom:
+            - secretRef:
+                name: cloudlens-cloud-credentials
+                optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: backend-data
+              mountPath: /etc/cloudlens
+              subPath: config
+            - name: backend-config
+              mountPath: /etc/cloudlens/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: backend-data
+              mountPath: /app/data
+              subPath: data
+            - name: backend-data
+              mountPath: /app/logs
+              subPath: logs
+      volumes:
+        - name: backend-config
+          configMap:
+            name: cloudlens-backend-config
+        - name: backend-data
+          persistentVolumeClaim:
+            claimName: cloudlens-backend-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudlens-frontend
+  namespace: cloudlens
+  labels:
+    app.kubernetes.io/name: cloudlens
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudlens
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudlens
+        app.kubernetes.io/component: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: cloudlens-frontend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
