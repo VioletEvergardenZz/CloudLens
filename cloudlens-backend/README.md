@@ -88,7 +88,7 @@ go build -o bin/cloudlens-server ./cmd
 - `GET /api/health`
 - `GET /api/cloud/accounts`
 - `GET /api/cloud/aliyun/instances`：返回 ECS 基础信息，并附带 `chargeType`、`isSpot`、`spotStrategy`、`expiredAt`、`expiresInDays`、`expirationStatus`、`expirationMessage` 用于判断到期剩余天数；按量付费、抢占式实例和云厂商远期占位时间会标注为无固定到期日
-- `GET /api/cloud/aliyun/overview`
+- `GET /api/cloud/aliyun/overview`：返回 ECS 常用监控指标，采样周期会兜底为有效秒数，并兼容云监控不同采样时间字段
 - `GET /api/cloud/aliyun/rds/instances`：返回 RDS 实例基础信息、规格、存储、连接端点、到期状态和 `DescribeResourceUsage` 官方空间用量；详情或空间接口失败时会保留基础实例并在 `detailErrors` 标注局部错误
 - `GET /api/cloud/aliyun/rds/overview`：按 RDS 引擎分批查询性能参数；单个性能 Key 不支持时只进入 `errors`，不影响其它指标返回
 - `GET /api/cloud/huawei/instances`：返回华为云 ECS 基础信息，字段与阿里云 ECS 对齐；华为云 ECS 详情接口未返回包年包月到期时间时会标注为 `unknown`

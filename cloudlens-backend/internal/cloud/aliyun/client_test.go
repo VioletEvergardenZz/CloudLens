@@ -95,6 +95,35 @@ func TestAliyunMetricUnitDocumentsOverviewUnits(t *testing.T) {
 	}
 }
 
+func TestNewClientNormalizesInvalidMetricPeriod(t *testing.T) {
+	client, err := NewClient(Config{
+		AccessKeyID:     "test-ak",
+		AccessKeySecret: "test-secret",
+		Region:          "cn-hangzhou",
+		MetricPeriod:    "not-a-number",
+	})
+	if err != nil {
+		t.Fatalf("创建阿里云客户端失败: %v", err)
+	}
+	if client.config.MetricPeriod != "60" {
+		t.Fatalf("非法采样周期应回退到 60 秒，实际 %s", client.config.MetricPeriod)
+	}
+}
+
+func TestNormalizeSamplingPeriodKeepsPositiveSeconds(t *testing.T) {
+	cases := map[string]string{
+		"":      "60",
+		"0":     "60",
+		"-1":    "60",
+		" 300 ": "300",
+	}
+	for input, expected := range cases {
+		if actual := normalizeSamplingPeriod(input); actual != expected {
+			t.Fatalf("采样周期 %q 期望 %s，实际 %s", input, expected, actual)
+		}
+	}
+}
+
 func TestTrafficKbitToBitRateUsesSamplingPeriod(t *testing.T) {
 	got := trafficKbitToBitRate(120, 60)
 	if got != 2000 {
@@ -109,6 +138,33 @@ func TestParseAliyunTimeSupportsMinutePrecision(t *testing.T) {
 	}
 	if parsed.UTC().Format(time.RFC3339) != "2026-05-21T09:59:00Z" {
 		t.Fatalf("解析后的时间不符合预期: %s", parsed.UTC().Format(time.RFC3339))
+	}
+}
+
+func TestParseMetricPointsSupportsTimestampAliases(t *testing.T) {
+	raw := `[
+		{"Timestamp": 1778493600000, "Average": "12.5"},
+		{"timestamp": 1778493660, "value": 0},
+		{"Date": "2026-05-11T10:02:00Z", "Value": 7},
+		{"timestamp": 0, "Average": 99},
+		{"timestamp": 1778493780000, "NotAValue": 1}
+	]`
+
+	points, err := parseMetricPoints(raw)
+	if err != nil {
+		t.Fatalf("解析云监控采样失败: %v", err)
+	}
+	if len(points) != 3 {
+		t.Fatalf("期望保留 3 个有效采样点，实际 %#v", points)
+	}
+	if points[0].Timestamp != 1778493600000 || points[0].Value != 12.5 {
+		t.Fatalf("第一个采样点不符合预期: %#v", points[0])
+	}
+	if points[1].Timestamp != 1778493660000 || points[1].Value != 0 {
+		t.Fatalf("秒级时间戳或 0 值采样处理不符合预期: %#v", points[1])
+	}
+	if points[2].Timestamp != 1778493720000 || points[2].Value != 7 {
+		t.Fatalf("Date 时间采样处理不符合预期: %#v", points[2])
 	}
 }
 

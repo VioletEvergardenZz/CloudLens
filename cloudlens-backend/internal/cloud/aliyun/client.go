@@ -42,15 +42,12 @@ func NewClient(config Config) (*Client, error) {
 	config.AccessKeyID = strings.TrimSpace(config.AccessKeyID)
 	config.AccessKeySecret = strings.TrimSpace(config.AccessKeySecret)
 	config.Region = strings.TrimSpace(config.Region)
-	config.MetricPeriod = strings.TrimSpace(config.MetricPeriod)
+	config.MetricPeriod = normalizeSamplingPeriod(config.MetricPeriod)
 	if config.AccessKeyID == "" || config.AccessKeySecret == "" {
 		return nil, fmt.Errorf("阿里云 AccessKey 未配置，请在云账号管理中新增账号，或临时设置 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET")
 	}
 	if config.Region == "" && len(config.Regions) == 0 {
 		return nil, fmt.Errorf("阿里云地域未配置，请在云账号管理中填写地域，或临时设置 ALIYUN_REGION/ALIYUN_REGIONS")
-	}
-	if config.MetricPeriod == "" {
-		config.MetricPeriod = "60"
 	}
 	return &Client{config: config}, nil
 }
@@ -259,10 +256,7 @@ func (c *Client) MetricWithDimensions(metricName string, dimensions map[string]s
 	if metricName == "" {
 		metricName = "cpu_total"
 	}
-	period = strings.TrimSpace(period)
-	if period == "" {
-		period = c.config.MetricPeriod
-	}
+	period = normalizeSamplingPeriod(firstNonEmpty(period, c.config.MetricPeriod))
 	if minutes <= 0 || minutes > 24*60 {
 		minutes = 30
 	}
@@ -316,7 +310,8 @@ func (c *Client) InstanceMonitorMetrics(instanceID, region string, minutes int, 
 	if region == "" {
 		return nil, fmt.Errorf("查询 ECS 基础监控必须指定 region")
 	}
-	periodSeconds := parsePositiveInt(firstNonEmpty(period, c.config.MetricPeriod), 60)
+	effectivePeriod := normalizeSamplingPeriod(firstNonEmpty(period, c.config.MetricPeriod))
+	periodSeconds := parsePositiveInt(effectivePeriod, 60)
 	if minutes <= 0 || minutes > 24*60 {
 		minutes = 30
 	}
@@ -340,15 +335,15 @@ func (c *Client) InstanceMonitorMetrics(instanceID, region string, minutes int, 
 		return items[i].TimeStamp < items[j].TimeStamp
 	})
 	out := map[string]*MetricSeries{
-		"cpu":               newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.CPU", period, "%"),
-		"internetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetRX", period, "bit/s"),
-		"internetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetTX", period, "bit/s"),
-		"intranetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetRX", period, "bit/s"),
-		"intranetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetTX", period, "bit/s"),
-		"internetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetBandwidth", period, "bit/s"),
-		"intranetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetBandwidth", period, "bit/s"),
-		"diskReadBps":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSRead", period, "Byte/s"),
-		"diskWriteBps":      newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSWrite", period, "Byte/s"),
+		"cpu":               newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.CPU", effectivePeriod, "%"),
+		"internetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetRX", effectivePeriod, "bit/s"),
+		"internetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetTX", effectivePeriod, "bit/s"),
+		"intranetIn":        newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetRX", effectivePeriod, "bit/s"),
+		"intranetOut":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetTX", effectivePeriod, "bit/s"),
+		"internetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.InternetBandwidth", effectivePeriod, "bit/s"),
+		"intranetBandwidth": newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.IntranetBandwidth", effectivePeriod, "bit/s"),
+		"diskReadBps":       newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSRead", effectivePeriod, "Byte/s"),
+		"diskWriteBps":      newMetricSeries(instanceID, region, "ecs.DescribeInstanceMonitorData.BPSWrite", effectivePeriod, "Byte/s"),
 	}
 	for _, item := range items {
 		timestamp := parseAliyunTimeMillis(item.TimeStamp)
@@ -383,10 +378,7 @@ func (c *Client) RDSPerformance(dbInstanceID, region, engine string, minutes int
 	if region == "" {
 		return nil, nil, fmt.Errorf("查询 RDS 监控必须指定 region")
 	}
-	period = strings.TrimSpace(period)
-	if period == "" {
-		period = c.config.MetricPeriod
-	}
+	period = normalizeSamplingPeriod(firstNonEmpty(period, c.config.MetricPeriod))
 	if minutes <= 0 || minutes > 24*60 {
 		minutes = 30
 	}
@@ -520,6 +512,11 @@ func trafficKbitToBitRate(valueKbit int, periodSeconds int) float64 {
 		periodSeconds = 60
 	}
 	return float64(valueKbit*1000) / float64(periodSeconds)
+}
+
+func normalizeSamplingPeriod(period string) string {
+	seconds := parsePositiveInt(period, 60)
+	return strconv.Itoa(seconds)
 }
 
 func aliyunMetricUnit(metricName string) string {
@@ -827,8 +824,14 @@ func parseMetricPoints(raw string) ([]MetricPoint, error) {
 	}
 	points := make([]MetricPoint, 0, len(records))
 	for _, record := range records {
-		timestamp := numberAsInt64(record["timestamp"])
-		value := firstMetricValue(record)
+		timestamp := metricTimestampMillis(record)
+		if timestamp <= 0 {
+			continue
+		}
+		value, ok := firstMetricValue(record)
+		if !ok {
+			continue
+		}
 		points = append(points, MetricPoint{
 			Timestamp: timestamp,
 			Value:     value,
@@ -839,6 +842,44 @@ func parseMetricPoints(raw string) ([]MetricPoint, error) {
 		return points[i].Timestamp < points[j].Timestamp
 	})
 	return points, nil
+}
+
+func metricTimestampMillis(record map[string]any) int64 {
+	for _, key := range []string{"timestamp", "Timestamp", "time", "Time"} {
+		if timestamp := normalizeUnixTimestampMillis(numberAsInt64(record[key])); timestamp > 0 {
+			return timestamp
+		}
+		if parsed := formattedTimeMillis(record[key]); parsed > 0 {
+			return parsed
+		}
+	}
+	for _, key := range []string{"date", "Date"} {
+		if parsed := formattedTimeMillis(record[key]); parsed > 0 {
+			return parsed
+		}
+		if timestamp := normalizeUnixTimestampMillis(numberAsInt64(record[key])); timestamp > 0 {
+			return timestamp
+		}
+	}
+	return 0
+}
+
+func normalizeUnixTimestampMillis(timestamp int64) int64 {
+	if timestamp <= 0 {
+		return 0
+	}
+	if timestamp > 1_000_000_000 && timestamp < 10_000_000_000 {
+		return timestamp * 1000
+	}
+	return timestamp
+}
+
+func formattedTimeMillis(value any) int64 {
+	raw, ok := value.(string)
+	if !ok {
+		return 0
+	}
+	return parseAliyunTimeMillis(raw)
 }
 
 func rdsPerformanceKeys(engine string) []string {
@@ -1123,13 +1164,13 @@ func parsePositiveInt(raw string, fallback int) int {
 	return value
 }
 
-func firstMetricValue(record map[string]any) float64 {
+func firstMetricValue(record map[string]any) (float64, bool) {
 	for _, key := range []string{"Average", "average", "Value", "value", "Maximum", "maximum", "Minimum", "minimum"} {
 		if value, ok := numberAsFloat64(record[key]); ok {
-			return value
+			return value, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func numberAsInt64(value any) int64 {
