@@ -6,7 +6,7 @@
 
 - 云账号管理
 - 阿里云 ECS/RDS 资源和监控查询
-- 华为云 ECS 资源和 CES 云监控查询
+- 华为云 ECS/RDS 资源和 CES 云监控查询
 - 告警、AI、知识库辅助能力
 - 文件入云扩展链路
 
@@ -35,14 +35,11 @@ go build -o bin/cloudlens-server ./cmd
 - `cloud_assets_enabled`
 - `aliyun_access_key_id`
 - `aliyun_access_key_secret`
-- `aliyun_region`
-- `aliyun_regions`
+- `aliyun_region` / `aliyun_regions`：可选，仅用于环境变量单账号兜底或临时限定调试；控制台云账号默认自动发现全部地域
 - `aliyun_metric_period`
 - `huawei_access_key_id`
 - `huawei_access_key_secret`
-- `huawei_project_id`：可选；部分账号或企业项目场景可显式填写，控制台云账号表单也支持按账号保存 Project ID
-- `huawei_region`
-- `huawei_regions`
+- `huawei_region` / `huawei_regions`：可选，仅用于环境变量单账号兜底或临时限定调试；控制台云账号默认自动发现全部地域
 - `huawei_metric_period`
 
 阿里云 RAM 权限建议至少包含：
@@ -54,6 +51,7 @@ go build -o bin/cloudlens-server ./cmd
 华为云 IAM 权限建议至少包含：
 
 - ECS 只读权限
+- RDS 只读权限
 - CES 云监控只读权限
 
 文件入云扩展主要看这些字段：
@@ -93,6 +91,8 @@ go build -o bin/cloudlens-server ./cmd
 - `GET /api/cloud/aliyun/rds/overview`：按 RDS 引擎分批查询性能参数；单个性能 Key 不支持时只进入 `errors`，不影响其它指标返回
 - `GET /api/cloud/huawei/instances`：返回华为云 ECS 基础信息，字段与阿里云 ECS 对齐；华为云 ECS 详情接口未返回包年包月到期时间时会标注为 `unknown`
 - `GET /api/cloud/huawei/overview`：优先返回华为云 CES 官方 `SYS.ECS` 指标，内存、分区磁盘和负载在官方基础监控无数据时再使用 `AGT.ECS` 指标兜底；单个指标失败不会影响其它指标
+- `GET /api/cloud/huawei/rds/instances`：返回华为云 RDS 实例基础信息、节点 ID、规格、存储、连接端点、到期状态和官方空间用量；空间接口失败时会保留基础实例并在 `detailErrors` 标注局部错误
+- `GET /api/cloud/huawei/rds/overview`：从 CES `SYS.RDS` 查询 CPU、内存、QPS、连接数和 IOPS；单个指标失败不会影响其它指标返回
 - `GET /api/cloud/huawei/metrics`：返回单个 CES 指标序列，可通过 `namespace` 和 `metric` 指定指标
 
 ## 验证

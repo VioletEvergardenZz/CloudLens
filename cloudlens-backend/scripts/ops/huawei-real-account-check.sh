@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 华为云真实账号回归（macOS/Linux）
-# 核心目标：抽样核对华为云 ECS 字段、CES 指标说明、Project ID 配置和到期状态。
+# 核心目标：抽样核对华为云 ECS/RDS 字段、CES 指标说明和到期状态。
 
 usage() {
   cat <<'EOF'
@@ -133,6 +133,13 @@ overview_code=0
 metrics_count=0
 metric_error_count=0
 instance_json="{}"
+rds_code=0
+rds_count=0
+rds_overview_code=0
+rds_metrics_count=0
+rds_metric_error_count=0
+rds_json="{}"
+rds_url="${base}/api/cloud/huawei/rds/instances?accountId=${account_id_q}"
 
 if [[ "${instances_code:-0}" == "200" ]]; then
   instance_count="$(jq -r '.items // [] | length' "$tmp_dir/instances.json")"
@@ -155,21 +162,53 @@ else
   jq -n '{}' >"$tmp_dir/overview.json"
 fi
 
+rds_code="$(http_code "$rds_url" "$tmp_dir/rds.json" || true)"
+if [[ "${rds_code:-0}" == "200" ]]; then
+  rds_count="$(jq -r '.items // [] | length' "$tmp_dir/rds.json")"
+  if [[ "$rds_count" -gt 0 ]]; then
+    rds_json="$(jq -c '.items[0]' "$tmp_dir/rds.json")"
+    db_id="$(jq -r '.id // ""' <<<"$rds_json")"
+    node_id="$(jq -r '.nodeId // ""' <<<"$rds_json")"
+    db_region="$(jq -r '.regionId // ""' <<<"$rds_json")"
+    engine="$(jq -r '.engine // ""' <<<"$rds_json")"
+    rds_overview_url="${base}/api/cloud/huawei/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&nodeId=$(url_encode "$node_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
+    rds_overview_code="$(http_code "$rds_overview_url" "$tmp_dir/rds-overview.json" || true)"
+    if [[ "$rds_overview_code" == "200" ]]; then
+      rds_metrics_count="$(jq -r '[.metrics // {} | to_entries[] | select((.value.points // []) | length > 0)] | length' "$tmp_dir/rds-overview.json")"
+      rds_metric_error_count="$(jq -r '.errors // {} | length' "$tmp_dir/rds-overview.json")"
+    else
+      jq -n '{}' >"$tmp_dir/rds-overview.json"
+    fi
+  else
+    jq -n '{}' >"$tmp_dir/rds-overview.json"
+  fi
+else
+  jq -n '{}' >"$tmp_dir/rds-overview.json"
+fi
+
 jq -n \
   --arg generatedAt "$generated_at" \
   --arg baseUrl "$BASE_URL" \
   --arg accountId "$ACCOUNT_ID" \
   --arg instancesUrl "$instances_url" \
+  --arg rdsUrl "$rds_url" \
   --argjson accountsCode "${accounts_code:-0}" \
   --argjson instancesCode "${instances_code:-0}" \
   --argjson overviewCode "${overview_code:-0}" \
+  --argjson rdsCode "${rds_code:-0}" \
+  --argjson rdsOverviewCode "${rds_overview_code:-0}" \
   --argjson instanceCount "${instance_count:-0}" \
   --argjson metricsCount "${metrics_count:-0}" \
   --argjson metricErrorCount "${metric_error_count:-0}" \
+  --argjson rdsCount "${rds_count:-0}" \
+  --argjson rdsMetricsCount "${rds_metrics_count:-0}" \
+  --argjson rdsMetricErrorCount "${rds_metric_error_count:-0}" \
   --argjson account "$account_json" \
   --argjson instance "$instance_json" \
+  --argjson rds "$rds_json" \
   --slurpfile instances "$tmp_dir/instances.json" \
   --slurpfile overview "$tmp_dir/overview.json" \
+  --slurpfile rdsOverview "$tmp_dir/rds-overview.json" \
   '{
     generatedAt: $generatedAt,
     baseUrl: $baseUrl,
@@ -178,15 +217,15 @@ jq -n \
       id: $account.id,
       name: $account.name,
       provider: $account.provider,
-      projectIdConfigured: (($account.projectId // "") != ""),
-      projectIdMasked: (if (($account.projectId // "") == "") then "" else (($account.projectId | tostring | .[0:6]) + "..." + ($account.projectId | tostring | .[-4:])) end),
       regions: ($account.regions // []),
       metricPeriod: ($account.metricPeriod // "")
     },
     checks: {
       accounts: {code: $accountsCode, pass: ($accountsCode == 200)},
       instances: {code: $instancesCode, url: $instancesUrl, count: $instanceCount, pass: ($instancesCode == 200)},
-      overview: {code: $overviewCode, pass: (($instanceCount == 0) or ($overviewCode == 200))}
+      overview: {code: $overviewCode, pass: (($instanceCount == 0) or ($overviewCode == 200))},
+      rdsInstances: {code: $rdsCode, url: $rdsUrl, count: $rdsCount, pass: ($rdsCode == 200)},
+      rdsOverview: {code: $rdsOverviewCode, pass: (($rdsCount == 0) or ($rdsOverviewCode == 200))}
     },
     sample: {
       instance: {
@@ -214,17 +253,44 @@ jq -n \
           | map({key: .key, namespace: (.value.namespace // ""), metricName: (.value.metricName // ""), unit: (.value.unit // ""), period: (.value.period // ""), points: ((.value.points // []) | length)})
         ),
         errors: ($overview[0].errors // {})
+      },
+      rds: {
+        id: ($rds.id // ""),
+        name: ($rds.name // ""),
+        nodeId: ($rds.nodeId // ""),
+        engine: ($rds.engine // ""),
+        regionId: ($rds.regionId // ""),
+        zoneId: ($rds.zoneId // ""),
+        status: ($rds.status // ""),
+        storageGb: ($rds.storageGb // null),
+        connectionString: ($rds.connectionString // ""),
+        expirationStatus: ($rds.expirationStatus // ""),
+        expirationMessage: ($rds.expirationMessage // ""),
+        metrics: {
+          availableMetricCount: ($rdsOverview[0].availableMetricCount // 0),
+          nonEmptyMetricGroups: $rdsMetricsCount,
+          errorMetricGroups: $rdsMetricErrorCount,
+          units: (
+            $rdsOverview[0].metrics // {}
+            | to_entries
+            | map({key: .key, namespace: (.value.namespace // ""), metricName: (.value.metricName // ""), unit: (.value.unit // ""), period: (.value.period // ""), points: ((.value.points // []) | length)})
+          ),
+          errors: ($rdsOverview[0].errors // {})
+        }
       }
     },
     pass: (
       ($accountsCode == 200) and
       ($instancesCode == 200) and
-      (($instanceCount == 0) or ($overviewCode == 200))
+      (($instanceCount == 0) or ($overviewCode == 200)) and
+      ($rdsCode == 200) and
+      (($rdsCount == 0) or ($rdsOverviewCode == 200))
     ),
     notes: [
       (if $instanceCount == 0 then "账号可访问但未返回 ECS 实例，无法核对 CES 指标和到期字段" else empty end),
       (if ($metricsCount == 0 and $instanceCount > 0) then "已返回实例但暂无 CES 采样点，请检查 CES 权限、实例地域、Agent 和采样延迟" else empty end),
-      (if (($account.projectId // "") == "") then "Project ID 未配置，当前依赖 SDK 自动识别项目" else "Project ID 已配置，本次回归可覆盖显式项目场景" end)
+      (if $rdsCount == 0 then "账号可访问但未返回 RDS 实例，无法核对 RDS 监控字段" else empty end),
+      (if ($rdsMetricsCount == 0 and $rdsCount > 0) then "已返回 RDS 实例但暂无 CES 采样点，请检查 CES 权限、实例地域和采样延迟" else empty end)
     ]
   }' >"$OUTPUT_FILE"
 

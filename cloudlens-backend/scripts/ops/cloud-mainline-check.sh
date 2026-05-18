@@ -197,6 +197,22 @@ if [[ "${accounts_code:-0}" == "200" ]]; then
             overview_code="$(http_code "$overview_url" "$overview_file" || true)"
             append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "overview" "$overview_code" "$overview_file" "$region" "$instance_id" "$overview_url"
           fi
+
+          rds_file="$tmp_dir/huawei-${account_id}-rds.json"
+          rds_url="${base}/api/cloud/huawei/rds/instances?accountId=${account_id_q}"
+          rds_code="$(http_code "$rds_url" "$rds_file" || true)"
+          append_cloud_check "$provider" "$account_id" "$account_name" "rds" "instances" "$rds_code" "$rds_file" "" "" "$rds_url"
+
+          if [[ "$rds_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$rds_file")" -gt 0 ]]; then
+            db_id="$(jq -r '.items[0].id // ""' "$rds_file")"
+            node_id="$(jq -r '.items[0].nodeId // ""' "$rds_file")"
+            db_region="$(jq -r '.items[0].regionId // ""' "$rds_file")"
+            engine="$(jq -r '.items[0].engine // ""' "$rds_file")"
+            rds_overview_file="$tmp_dir/huawei-${account_id}-rds-overview.json"
+            rds_overview_url="${base}/api/cloud/huawei/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&nodeId=$(url_encode "$node_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
+            rds_overview_code="$(http_code "$rds_overview_url" "$rds_overview_file" || true)"
+            append_cloud_check "$provider" "$account_id" "$account_name" "rds" "overview" "$rds_overview_code" "$rds_overview_file" "$db_region" "$db_id" "$rds_overview_url"
+          fi
           ;;
         *)
           unsupported_file="$tmp_dir/unsupported-${account_id}.json"

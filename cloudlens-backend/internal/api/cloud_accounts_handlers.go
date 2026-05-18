@@ -200,7 +200,7 @@ func (h *handler) cloudAliyunAccountTest(w http.ResponseWriter, id int64) {
 	if len(instances) == 0 {
 		if status == "ok" {
 			status = "warning"
-			message = "ECS 权限可用，但当前地域未发现实例"
+			message = "ECS 权限可用，但自动发现的地域未发现实例"
 		}
 		checks = append(checks, cloudAccountCheck{
 			Name:    "云监控读取",
@@ -298,9 +298,29 @@ func (h *handler) cloudHuaweiAccountTest(w http.ResponseWriter, id int64) {
 
 	status := "ok"
 	message := ecsMessage
-	if len(instances) == 0 {
+	rdsInstances, rdsErr := client.ListRDSInstances(nil)
+	if rdsErr != nil {
 		status = "warning"
-		message = "ECS 权限可用，但当前地域未发现实例"
+		message = humanizeHuaweiCloudError(rdsErr)
+		checks = append(checks, cloudAccountCheck{
+			Name:    "RDS 实例读取",
+			Status:  "error",
+			OK:      false,
+			Message: message,
+		})
+	} else {
+		checks = append(checks, cloudAccountCheck{
+			Name:    "RDS 实例读取",
+			Status:  "ok",
+			OK:      true,
+			Message: fmt.Sprintf("RDS 只读正常，发现 %d 个实例", len(rdsInstances)),
+		})
+	}
+	if len(instances) == 0 {
+		if status == "ok" {
+			status = "warning"
+			message = "ECS 权限可用，但自动发现的地域未发现实例"
+		}
 		checks = append(checks, cloudAccountCheck{
 			Name:    "云监控读取",
 			Status:  "skipped",
@@ -382,6 +402,7 @@ func sanitizeCloudAccounts(items []cloudAccountRecord) []cloudAccountRecord {
 func sanitizeCloudAccount(item cloudAccountRecord) cloudAccountRecord {
 	item.AccessKeyID = ""
 	item.AccessKeySecretCipher = ""
+	item.Regions = []string{}
 	if item.Provider == "" {
 		item.Provider = aliyuncloud.ProviderName
 	}

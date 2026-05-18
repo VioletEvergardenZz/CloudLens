@@ -37,7 +37,6 @@ data:
 
     huawei_access_key_id: "${HUAWEI_ACCESS_KEY_ID}"
     huawei_access_key_secret: "${HUAWEI_ACCESS_KEY_SECRET}"
-    huawei_project_id: "${HUAWEI_PROJECT_ID}"
     huawei_region: "${HUAWEI_REGION}"
     huawei_regions: "${HUAWEI_REGIONS}"
     huawei_metric_period: "${HUAWEI_METRIC_PERIOD}"

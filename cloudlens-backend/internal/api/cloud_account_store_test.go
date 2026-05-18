@@ -22,7 +22,6 @@ func TestCloudAccountStoreSupportsHuaweiProvider(t *testing.T) {
 		AccessKeyID:     "huawei-ak",
 		AccessKeySecret: "huawei-secret",
 		ProjectID:       &projectID,
-		Regions:         []string{"cn-north-4"},
 		MetricPeriod:    "60",
 	})
 	if err != nil {
@@ -45,8 +44,8 @@ func TestCloudAccountStoreSupportsHuaweiProvider(t *testing.T) {
 	if cfg.ProjectID != "project-cn-north-4" {
 		t.Fatalf("华为云 ProjectID 期望 project-cn-north-4，实际 %s", cfg.ProjectID)
 	}
-	if len(cfg.Regions) != 1 || cfg.Regions[0] != "cn-north-4" {
-		t.Fatalf("华为云地域期望 cn-north-4，实际 %#v", cfg.Regions)
+	if len(cfg.Regions) != 0 {
+		t.Fatalf("云账号运行配置不应再限定地域，实际 %#v", cfg.Regions)
 	}
 	if cfg.MetricPeriod != "60" {
 		t.Fatalf("采样周期期望 60，实际 %s", cfg.MetricPeriod)
@@ -69,7 +68,6 @@ func TestCloudAccountStoreSwitchProviderRequiresCredentials(t *testing.T) {
 		Name:            "阿里云测试账号",
 		AccessKeyID:     "aliyun-ak",
 		AccessKeySecret: "aliyun-secret",
-		Regions:         []string{"cn-hangzhou"},
 		MetricPeriod:    "60",
 	})
 	if err != nil {
@@ -85,7 +83,6 @@ func TestCloudAccountStoreSwitchProviderRequiresCredentials(t *testing.T) {
 		AccessKeyID:     "huawei-ak",
 		AccessKeySecret: "huawei-secret",
 		ProjectID:       &projectID,
-		Regions:         []string{"cn-north-4"},
 	})
 	if err != nil {
 		t.Fatalf("带凭据切换到华为云失败: %v", err)
@@ -120,7 +117,6 @@ func TestCloudAccountStoreUpdateCanClearHuaweiProjectID(t *testing.T) {
 		AccessKeyID:     "huawei-ak",
 		AccessKeySecret: "huawei-secret",
 		ProjectID:       &projectID,
-		Regions:         []string{"cn-south-1"},
 		MetricPeriod:    "60",
 	})
 	if err != nil {

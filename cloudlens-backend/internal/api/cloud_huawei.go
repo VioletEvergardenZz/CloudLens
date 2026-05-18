@@ -65,7 +65,7 @@ var defaultHuaweiOverviewMetrics = map[string][]huaweiMetricCandidate{
 }
 
 // cloudHuaweiInstances 返回当前只读账号下的华为云 ECS 实例列表。
-// regions 参数可用于临时限定地域，未传时使用账号或 HUAWEI_REGIONS/HUAWEI_REGION 配置。
+// regions 参数仅作为调试限定范围，未传时会自动发现并采集全部可见地域。
 func (h *handler) cloudHuaweiInstances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -93,6 +93,41 @@ func (h *handler) cloudHuaweiInstances(w http.ResponseWriter, r *http.Request) {
 		"accountId": accountID,
 		"ok":        true,
 		"provider":  huaweicloud.ProviderName,
+		"items":     items,
+		"total":     len(items),
+	})
+}
+
+// cloudHuaweiRDSInstances 返回当前只读账号下的华为云 RDS 实例列表。
+// regions 参数仅作为调试限定范围，未传时会自动发现并采集全部可见地域。
+func (h *handler) cloudHuaweiRDSInstances(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	client, account, err := h.newHuaweiCloudClientFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
+	items, err := client.ListRDSInstances(regions)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": humanizeHuaweiCloudError(err),
+			"code":  classifyHuaweiCloudError(err),
+		})
+		return
+	}
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accountId": accountID,
+		"ok":        true,
+		"provider":  huaweicloud.ProviderName,
+		"resource":  "rds",
 		"items":     items,
 		"total":     len(items),
 	})
@@ -200,6 +235,63 @@ func (h *handler) cloudHuaweiOverview(w http.ResponseWriter, r *http.Request) {
 		"accountId":            accountID,
 		"ok":                   true,
 		"provider":             huaweicloud.ProviderName,
+		"status":               status,
+		"message":              message,
+		"availableMetricCount": availableMetricCount,
+		"metrics":              metrics,
+		"errors":               errorsByMetric,
+	})
+}
+
+// cloudHuaweiRDSOverview 返回单台华为云 RDS 的 CES 性能指标集合。
+// 单个指标无数据或查询失败不影响其它指标，便于控制台先展示可用数据。
+func (h *handler) cloudHuaweiRDSOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	query := r.URL.Query()
+	dbInstanceID := firstCloudQuery(r, "dbInstanceId", "dbInstanceID", "instanceId", "id")
+	nodeID := firstCloudQuery(r, "nodeId", "nodeID")
+	region := firstCloudQuery(r, "region", "regionId")
+	if strings.TrimSpace(dbInstanceID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "dbInstanceId 不能为空"})
+		return
+	}
+	minutes := parseCloudInt(query.Get("minutes"), 30, 1, 24*60)
+	client, account, err := h.newHuaweiCloudClientFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	metrics, errorsByMetric, err := client.RDSPerformance(dbInstanceID, nodeID, region, minutes, query.Get("period"))
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": humanizeHuaweiCloudError(err),
+			"code":  classifyHuaweiCloudError(err),
+		})
+		return
+	}
+	availableMetricCount := countHuaweiMetricSeries(metrics)
+	status := "ok"
+	message := ""
+	if availableMetricCount == 0 {
+		status = "no_metric_data"
+		message = "未查询到华为云 RDS 监控数据，请检查 CES 只读权限、实例地域和监控采样状态"
+		if len(errorsByMetric) > 0 {
+			status = "metric_error"
+			message = firstCloudMapValue(errorsByMetric)
+		}
+	}
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"accountId":            accountID,
+		"ok":                   true,
+		"provider":             huaweicloud.ProviderName,
+		"resource":             "rds",
 		"status":               status,
 		"message":              message,
 		"availableMetricCount": availableMetricCount,
@@ -449,6 +541,8 @@ func classifyHuaweiCloudError(err error) string {
 		return "HUAWEI_ECS_PERMISSION_OR_REGION_ERROR"
 	case strings.Contains(msg, "showmetricdata") || strings.Contains(msg, "ces"):
 		return "HUAWEI_CES_PERMISSION_OR_METRIC_ERROR"
+	case strings.Contains(msg, "listinstances") || strings.Contains(msg, "showstorageusedspace") || strings.Contains(msg, "rds"):
+		return "HUAWEI_RDS_PERMISSION_OR_REGION_ERROR"
 	default:
 		return "HUAWEI_API_ERROR"
 	}
@@ -469,9 +563,14 @@ func humanizeHuaweiCloudError(err error) string {
 		if strings.Contains(raw, "listserversdetails") || strings.Contains(raw, "ecs") {
 			return "当前华为云账号缺少 ECS 只读权限，请补充 ECS 查询权限"
 		}
-		return "当前华为云账号权限不足，请确认 ECS 只读和 CES 云监控只读权限"
+		if strings.Contains(raw, "listinstances") || strings.Contains(raw, "showstorageusedspace") || strings.Contains(raw, "rds") {
+			return "当前华为云账号缺少 RDS 只读权限，请补充 RDS 查询权限"
+		}
+		return "当前华为云账号权限不足，请确认 ECS、RDS 和 CES 云监控只读权限"
 	case "HUAWEI_ECS_PERMISSION_OR_REGION_ERROR":
-		return "华为云 ECS 实例读取失败，请检查 ECS 只读权限和账号地域配置"
+		return "华为云 ECS 实例读取失败，请检查 ECS 只读权限和地域发现状态"
+	case "HUAWEI_RDS_PERMISSION_OR_REGION_ERROR":
+		return "华为云 RDS 实例读取失败，请检查 RDS 只读权限和地域发现状态"
 	case "HUAWEI_CES_PERMISSION_OR_METRIC_ERROR":
 		return "华为云云监控指标读取失败，请检查 CES 权限、实例地域和监控采样状态"
 	default:

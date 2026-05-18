@@ -151,6 +151,8 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/cloud/aliyun/metrics", h.cloudAliyunMetrics)
 	mux.HandleFunc("/api/cloud/aliyun/overview", h.cloudAliyunOverview)
 	mux.HandleFunc("/api/cloud/huawei/instances", h.cloudHuaweiInstances)
+	mux.HandleFunc("/api/cloud/huawei/rds/instances", h.cloudHuaweiRDSInstances)
+	mux.HandleFunc("/api/cloud/huawei/rds/overview", h.cloudHuaweiRDSOverview)
 	mux.HandleFunc("/api/cloud/huawei/metrics", h.cloudHuaweiMetrics)
 	mux.HandleFunc("/api/cloud/huawei/overview", h.cloudHuaweiOverview)
 	mux.HandleFunc("/api/health", h.health)

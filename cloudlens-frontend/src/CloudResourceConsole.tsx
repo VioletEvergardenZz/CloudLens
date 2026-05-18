@@ -42,7 +42,6 @@ type CloudAccount = {
   uid: string;
   owner: string;
   scope: string;
-  projectId?: string;
   status: AccountStatus;
   lastSync: string;
   regions: string[];
@@ -205,8 +204,9 @@ type AliyunRDSResourceUsage = {
 
 type AliyunRDSInstance = {
   id: string;
+  nodeId?: string;
   name: string;
-  provider: "aliyun";
+  provider: Provider;
   regionId: string;
   zoneId: string;
   engine: string;
@@ -269,7 +269,6 @@ type ApiCloudAccount = {
   provider: Provider;
   name: string;
   accessKeyIdMasked: string;
-  projectId?: string;
   regions: string[];
   metricPeriod: string;
   enabled: boolean;
@@ -303,14 +302,7 @@ type CloudAccountForm = {
   name: string;
   accessKeyId: string;
   accessKeySecret: string;
-  projectId: string;
-  regions: string;
   metricPeriod: string;
-};
-
-type AccountRegionPreset = {
-  label: string;
-  value: string;
 };
 
 type MonitorMetricKey = string;
@@ -345,6 +337,14 @@ type CloudAssetIssue = {
   scope: string;
   message: string;
 };
+
+type CloudOverviewRefreshResult = {
+  server: CloudServer;
+  overview: AliyunOverviewResponse;
+  issue?: CloudAssetIssue;
+};
+
+type CloudOverviewRefreshTask = () => Promise<CloudOverviewRefreshResult>;
 
 type AgentStatusCounter = Record<AgentStatus, number>;
 
@@ -475,36 +475,6 @@ const providerLabels: Record<Provider, string> = {
 };
 
 const supportedAccountProviders: Provider[] = ["aliyun", "huawei"];
-const defaultAccountRegions: Record<Provider, string> = {
-  aliyun: "cn-hangzhou",
-  huawei: "cn-south-1",
-  tencent: "ap-guangzhou",
-};
-
-const accountRegionPresets: Record<Provider, AccountRegionPreset[]> = {
-  aliyun: [
-    { label: "华南3（广州）", value: "cn-guangzhou" },
-    { label: "华南1（深圳）", value: "cn-shenzhen" },
-    { label: "华东1（杭州）", value: "cn-hangzhou" },
-    { label: "华东2（上海）", value: "cn-shanghai" },
-    { label: "华北2（北京）", value: "cn-beijing" },
-  ],
-  huawei: [
-    { label: "华南-广州", value: "cn-south-1" },
-    { label: "华北-北京四", value: "cn-north-4" },
-    { label: "华东-上海一", value: "cn-east-3" },
-    { label: "中国-香港", value: "ap-southeast-1" },
-  ],
-  tencent: [
-    { label: "广州", value: "ap-guangzhou" },
-  ],
-};
-
-const regionInputTips: Record<Provider, string> = {
-  aliyun: "例如：华南3（广州）填 cn-guangzhou；多地域用英文逗号分隔。",
-  huawei: "例如：华南-广州填 cn-south-1；多地域用英文逗号分隔。",
-  tencent: "例如：广州填 ap-guangzhou；多地域用英文逗号分隔。",
-};
 
 const resourceTypeLabels: Record<ResourceType, string> = {
   ecs: "ECS",
@@ -553,15 +523,25 @@ const emptyCloudServer: CloudServer = {
 const SIDEBAR_STORAGE_KEY = "gwf-cloud-sidebar-hidden";
 const THEME_STORAGE_KEY = "gwf-cloud-theme";
 const ASSET_REFRESH_INTERVAL_MS = 30_000;
+const CLOUD_ASSET_FETCH_TIMEOUT_MS = 60_000;
+const CLOUD_OVERVIEW_FETCH_TIMEOUT_MS = 30_000;
 
 const emptyAccountForm: CloudAccountForm = {
   provider: "aliyun",
   name: "",
   accessKeyId: "",
   accessKeySecret: "",
-  projectId: "",
-  regions: defaultAccountRegions.aliyun,
   metricPeriod: "60",
+};
+
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = CLOUD_ASSET_FETCH_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
 };
 
 const resolveInitialSidebarHidden = () => {
@@ -1012,11 +992,11 @@ const getCloudServerStatus = (status: string): ServerStatus => {
   return "warning";
 };
 
-const getAliyunRDSStatus = (status: string): ServerStatus => {
+const getCloudRDSStatus = (status: string): ServerStatus => {
   const normalized = status.trim().toLowerCase();
-  if (normalized === "running") return "running";
-  if (normalized === "stopped" || normalized === "deleted" || normalized === "released") return "offline";
-  if (["creating", "rebooting", "restoring", "backingup", "migrating", "classchanging", "netmodifying"].includes(normalized)) {
+  if (normalized === "running" || normalized === "active" || normalized === "normal") return "running";
+  if (normalized === "stopped" || normalized === "deleted" || normalized === "released" || normalized === "shutdown") return "offline";
+  if (["creating", "build", "rebooting", "restoring", "backingup", "migrating", "classchanging", "netmodifying"].includes(normalized)) {
     return "maintenance";
   }
   return "warning";
@@ -1295,8 +1275,7 @@ const mapApiCloudAccount = (account: ApiCloudAccount): CloudAccount => {
     alias: `${providerLabels[provider]} / ${account.name}`,
     uid: account.accessKeyIdMasked || "--",
     owner: "控制台配置",
-    scope: account.enabled ? (provider === "aliyun" ? "ECS/RDS 资源与指标" : "ECS 资源与指标") : "已停用",
-    projectId: account.projectId || "",
+    scope: account.enabled ? "ECS/RDS 资源与指标" : "已停用",
     status,
     lastSync: formatDisplayTime(account.lastCheckedAt),
     regions: account.regions ?? [],
@@ -1479,8 +1458,8 @@ const resolveRDSStorageUsage = (overview: AliyunOverviewResponse | undefined, in
   return { storageGb: instance.storageGb, source: "missing" };
 };
 
-const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance, overview?: AliyunOverviewResponse): CloudServer => {
-  const serverStatus = getAliyunRDSStatus(instance.status);
+const mapCloudRDSResource = (account: CloudAccount, instance: AliyunRDSInstance, overview?: AliyunOverviewResponse): CloudServer => {
+  const serverStatus = getCloudRDSStatus(instance.status);
   const expiration = resolveExpirationInfo({
     chargeType: instance.payType,
     expiredAt: instance.expiredAt,
@@ -1505,7 +1484,7 @@ const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance
   return {
     id: `${account.id}:rds:${instance.id}`,
     accountId: account.id,
-    provider: "aliyun",
+    provider: account.provider,
     resourceType: "rds",
     region: instance.regionId || "--",
     zone: instance.zoneId || "--",
@@ -1515,7 +1494,7 @@ const mapAliyunRDSResource = (account: CloudAccount, instance: AliyunRDSInstance
     publicIp: port ? `${connectionString}:${port}` : connectionString,
     publicIpType: "none",
     publicIpId: "",
-    privateIp: instance.vpcId || primaryEndpoint?.ipAddress || "-",
+    privateIp: primaryEndpoint?.ipAddress || instance.vpcId || "-",
     os: [instance.engine, instance.engineVersion].filter(Boolean).join(" ") || "--",
     spec: `${classText} / ${storageText}`,
     chargeType: instance.payType || "",
@@ -1718,6 +1697,14 @@ const mergeOverviewMapWithPrevious = (
       ];
     })
   );
+};
+
+const filterOverviewMapForRows = (
+  overviewMap: Record<string, AliyunOverviewResponse>,
+  rows: CloudServer[]
+) => {
+  const rowIDs = new Set(rows.map((server) => server.id));
+  return Object.fromEntries(Object.entries(overviewMap).filter(([serverId]) => rowIDs.has(serverId)));
 };
 
 const buildDerivedSeries = (metricName: string, seriesList: Array<AliyunMetricSeries | undefined>): AliyunMetricSeries | undefined => {
@@ -2107,12 +2094,6 @@ const serverMatchesScope = (server: CloudServer, parsedScope: { kind: ScopeKind;
   return true;
 };
 
-const splitFormList = (raw: string) =>
-  raw
-    .split(/[,;\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
 const buildCloudAssetIssue = (
   account: CloudAccount,
   resourceType: ResourceType,
@@ -2490,6 +2471,31 @@ export function CloudResourceConsole() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
+  const refreshCloudResourceOverviews = async (tasks: CloudOverviewRefreshTask[], baseIssues: CloudAssetIssue[]) => {
+    if (!tasks.length) return;
+    const results = await Promise.allSettled(tasks.map((task) => task()));
+    const overviewMap: Record<string, AliyunOverviewResponse> = {};
+    const nextServers: CloudServer[] = [];
+    const nextIssues = [...baseIssues];
+    for (const result of results) {
+      if (result.status !== "fulfilled") {
+        continue;
+      }
+      overviewMap[result.value.server.id] = result.value.overview;
+      nextServers.push(result.value.server);
+      if (result.value.issue) {
+        nextIssues.push(result.value.issue);
+      }
+    }
+    if (!nextServers.length) return;
+    const nextServerMap = new Map(nextServers.map((server) => [server.id, server]));
+    setOverviewByServerId((current) => mergeOverviewMapWithPrevious(overviewMap, current, nextServers));
+    setServers((current) => current.map((server) => nextServerMap.get(server.id) ?? server));
+    setAssetIssues(nextIssues);
+    setAssetError(summarizeCloudAssetIssues(nextIssues));
+    setRefreshState(nextIssues.length === 0 ? "ok" : "error");
+  };
+
   const loadCloudAssets = async (options: { silent?: boolean } = {}) => {
     if (assetLoadingRef.current) return false;
     assetLoadingRef.current = true;
@@ -2504,7 +2510,7 @@ export function CloudResourceConsole() {
     if (!options.silent) setAssetLoading(true);
     setAssetError("");
     try {
-      const accountResp = await fetch(`${API_BASE}/api/cloud/accounts`, {
+      const accountResp = await fetchWithTimeout(`${API_BASE}/api/cloud/accounts`, {
         cache: "no-store",
         headers: buildApiHeaders(),
       });
@@ -2525,15 +2531,27 @@ export function CloudResourceConsole() {
         return true;
       }
 
-      const overviewMap: Record<string, AliyunOverviewResponse> = {};
+      const overviewTasks: CloudOverviewRefreshTask[] = [];
       const issues: CloudAssetIssue[] = [];
+      const appendAssetIssue = (issue: CloudAssetIssue) => {
+        issues.push(issue);
+        setAssetIssues([...issues]);
+        setAssetError(summarizeCloudAssetIssues(issues));
+      };
+      const applyAccountResourceRows = (account: CloudAccount, resourceType: ResourceType, accountRows: CloudServer[]) => {
+        setServers((current) => {
+          const rowsWithoutResource = current.filter((server) => server.accountId !== account.id || getResourceType(server) !== resourceType);
+          return mergeServerRowsWithPrevious([...rowsWithoutResource, ...accountRows], current, overviewByServerId);
+        });
+        setSelectedServerId((current) => current || accountRows[0]?.id || "");
+      };
       const accountResults = await Promise.allSettled(
         mappedAccounts
           .filter((account) => account.enabled !== false)
           .map(async (account) => {
             const providerPath = encodeURIComponent(account.provider);
             const loadECSRows = async () => {
-              const resp = await fetch(`${API_BASE}/api/cloud/${providerPath}/instances?accountId=${encodeURIComponent(account.id)}`, {
+              const resp = await fetchWithTimeout(`${API_BASE}/api/cloud/${providerPath}/instances?accountId=${encodeURIComponent(account.id)}`, {
                 cache: "no-store",
                 headers: buildApiHeaders(),
               });
@@ -2542,28 +2560,31 @@ export function CloudResourceConsole() {
                 throw buildCloudAssetIssue(account, "ecs", "实例列表", payload.error || `接口返回 ${resp.status}`);
               }
               const instances = payload.items ?? [];
-              return Promise.all(
-                instances.map(async (instance) => {
-                  const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
-                  const overviewResp = await fetch(
+              return instances.map((instance) => {
+                const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
+                const server = mapAliyunServer(account, instance);
+                overviewTasks.push(async () => {
+                  const overviewResp = await fetchWithTimeout(
                     `${API_BASE}/api/cloud/${providerPath}/overview?accountId=${encodeURIComponent(account.id)}&instanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}&publicIp=${encodeURIComponent(publicIp)}`,
-                    { cache: "no-store", headers: buildApiHeaders() }
+                    { cache: "no-store", headers: buildApiHeaders() },
+                    CLOUD_OVERVIEW_FETCH_TIMEOUT_MS
                   );
                   const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
-                  const server = mapAliyunServer(account, instance, overviewResp.ok ? overview : undefined);
                   if (overviewResp.ok) {
-                    overviewMap[server.id] = overview;
-                  } else {
-                    const message = overview.error || "ECS 监控数据读取失败";
-                    overviewMap[server.id] = { ok: false, error: message };
-                    issues.push(buildCloudAssetIssue(account, "ecs", `${instance.regionId || "--"} / ${instance.id}`, message));
+                    return { server: mapAliyunServer(account, instance, overview), overview };
                   }
-                  return server;
-                })
-              );
+                  const message = overview.error || "ECS 监控数据读取失败";
+                  return {
+                    server,
+                    overview: { ok: false, error: message },
+                    issue: buildCloudAssetIssue(account, "ecs", `${instance.regionId || "--"} / ${instance.id}`, message),
+                  };
+                });
+                return server;
+              });
             };
             const loadRDSRows = async () => {
-              const resp = await fetch(`${API_BASE}/api/cloud/aliyun/rds/instances?accountId=${encodeURIComponent(account.id)}`, {
+              const resp = await fetchWithTimeout(`${API_BASE}/api/cloud/${providerPath}/rds/instances?accountId=${encodeURIComponent(account.id)}`, {
                 cache: "no-store",
                 headers: buildApiHeaders(),
               });
@@ -2572,44 +2593,67 @@ export function CloudResourceConsole() {
                 throw buildCloudAssetIssue(account, "rds", "实例列表", payload.error || `接口返回 ${resp.status}`);
               }
               const instances = payload.items ?? [];
-              return Promise.all(
-                instances.map(async (instance) => {
-                  const overviewResp = await fetch(
-                    `${API_BASE}/api/cloud/aliyun/rds/overview?accountId=${encodeURIComponent(account.id)}&dbInstanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&engine=${encodeURIComponent(instance.engine || "")}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}`,
-                    { cache: "no-store", headers: buildApiHeaders() }
+              return instances.map((instance) => {
+                const server = mapCloudRDSResource(account, instance);
+                overviewTasks.push(async () => {
+                  const overviewResp = await fetchWithTimeout(
+                    `${API_BASE}/api/cloud/${providerPath}/rds/overview?accountId=${encodeURIComponent(account.id)}&dbInstanceId=${encodeURIComponent(instance.id)}&nodeId=${encodeURIComponent(instance.nodeId || "")}&region=${encodeURIComponent(instance.regionId)}&engine=${encodeURIComponent(instance.engine || "")}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}`,
+                    { cache: "no-store", headers: buildApiHeaders() },
+                    CLOUD_OVERVIEW_FETCH_TIMEOUT_MS
                   );
                   const overview = (await overviewResp.json().catch(() => ({}))) as AliyunOverviewResponse;
-                  const server = mapAliyunRDSResource(account, instance, overviewResp.ok ? overview : undefined);
                   if (overviewResp.ok) {
-                    overviewMap[server.id] = overview;
-                  } else {
-                    const message = overview.error || "RDS 性能数据读取失败";
-                    overviewMap[server.id] = { ok: false, resource: "rds", error: message };
-                    issues.push(buildCloudAssetIssue(account, "rds", `${instance.regionId || "--"} / ${instance.id}`, message));
+                    return { server: mapCloudRDSResource(account, instance, overview), overview };
                   }
-                  return server;
-                })
-              );
+                  const message = overview.error || "RDS 性能数据读取失败";
+                  return {
+                    server,
+                    overview: { ok: false, resource: "rds", error: message },
+                    issue: buildCloudAssetIssue(account, "rds", `${instance.regionId || "--"} / ${instance.id}`, message),
+                  };
+                });
+                return server;
+              });
             };
-            const resourceLoaders = account.provider === "aliyun" ? [loadECSRows(), loadRDSRows()] : [loadECSRows()];
-            const resourceResults = await Promise.allSettled(resourceLoaders);
-            return resourceResults.flatMap((result) => {
-              if (result.status === "fulfilled") return result.value;
-              if (isCloudAssetIssue(result.reason)) {
-                issues.push(result.reason);
-              } else {
-                issues.push(buildCloudAssetIssue(account, "ecs", "资源同步", result.reason instanceof Error ? result.reason.message : "云资源同步失败"));
-              }
+            const resourceLoaders: Array<{ type: ResourceType; load: () => Promise<CloudServer[]> }> =
+              [
+                { type: "ecs", load: loadECSRows },
+                { type: "rds", load: loadRDSRows },
+              ];
+            const resourceRows = await Promise.all(
+              resourceLoaders.map(async (loader) => {
+                try {
+                  const rows = await loader.load();
+                  applyAccountResourceRows(account, loader.type, rows);
+                  return rows;
+                } catch (reason) {
+                  const issue = isCloudAssetIssue(reason)
+                    ? reason
+                    : buildCloudAssetIssue(account, loader.type, "资源同步", reason instanceof Error ? reason.message : "云资源同步失败");
+                  appendAssetIssue(issue);
+                  applyAccountResourceRows(account, loader.type, []);
+                  return [];
+                }
+              })
+            );
+            const accountRows = resourceRows.flat();
+            if (!accountRows.length) {
               return [];
+            }
+            setServers((current) => {
+              const rowsWithoutAccount = current.filter((server) => server.accountId !== account.id);
+              return mergeServerRowsWithPrevious([...rowsWithoutAccount, ...accountRows], current, overviewByServerId);
             });
+            setSelectedServerId((current) => current || accountRows[0]?.id || "");
+            return accountRows;
           })
       );
       const rows = accountResults.flatMap((result) => {
         if (result.status === "fulfilled") return result.value;
         if (isCloudAssetIssue(result.reason)) {
-          issues.push(result.reason);
+          appendAssetIssue(result.reason);
         } else {
-          issues.push({
+          appendAssetIssue({
             id: `unknown:${Date.now()}:${issues.length}`,
             provider: "aliyun",
             accountId: "",
@@ -2621,13 +2665,14 @@ export function CloudResourceConsole() {
         }
         return [];
       });
-      setOverviewByServerId((current) => mergeOverviewMapWithPrevious(overviewMap, current, rows));
-      setServers((current) => mergeServerRowsWithPrevious(rows, current, overviewMap));
+      setOverviewByServerId((current) => filterOverviewMapForRows(current, rows));
+      setServers((current) => mergeServerRowsWithPrevious(rows, current, overviewByServerId));
       setSelectedServerId((current) => (rows.some((server) => server.id === current) ? current : rows[0]?.id ?? ""));
       setLastSyncAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
       setAssetIssues(issues);
       setAssetError(summarizeCloudAssetIssues(issues));
       setRefreshState(issues.length === 0 ? "ok" : "error");
+      void refreshCloudResourceOverviews(overviewTasks, issues);
       return issues.length === 0;
     } catch (error) {
       setAssetError(error instanceof Error ? error.message : "云资源同步失败");
@@ -2648,9 +2693,8 @@ export function CloudResourceConsole() {
 
   const saveAccount = async () => {
     if (USE_MOCK) return;
-    const regions = splitFormList(accountForm.regions);
-    if (!accountForm.name.trim() || !regions.length) {
-      setAccountNotice("请填写账号名称和地域");
+    if (!accountForm.name.trim()) {
+      setAccountNotice("请填写账号名称");
       return;
     }
     if (!editingAccountId && (!accountForm.accessKeyId.trim() || !accountForm.accessKeySecret.trim())) {
@@ -2671,8 +2715,7 @@ export function CloudResourceConsole() {
           name: accountForm.name.trim(),
           accessKeyId: accountForm.accessKeyId.trim(),
           accessKeySecret: accountForm.accessKeySecret.trim(),
-          projectId: accountForm.projectId.trim(),
-          regions,
+          regions: [],
           metricPeriod: accountForm.metricPeriod.trim() || "60",
         }),
       });
@@ -2786,11 +2829,9 @@ export function CloudResourceConsole() {
       name: account.name,
       accessKeyId: "",
       accessKeySecret: "",
-      projectId: account.projectId || "",
-      regions: account.regions.join(","),
       metricPeriod: account.metricPeriod || "60",
     });
-    setAccountNotice("编辑模式下 AccessKey 留空表示沿用原值，华为云 Project ID 可留空清除");
+    setAccountNotice("编辑模式下 AccessKey 留空表示沿用原值");
   };
 
   const cancelAccountEdit = () => {
@@ -2799,21 +2840,13 @@ export function CloudResourceConsole() {
     setAccountNotice("");
   };
 
-  const applyRegionPreset = (region: string) => {
-    updateAccountForm("regions", region);
-  };
-
   const updateAccountForm = <K extends keyof CloudAccountForm>(key: K, value: CloudAccountForm[K]) => {
     setAccountForm((current) => {
       if (key === "provider") {
         const nextProvider = value as Provider;
-        const currentDefaultRegion = defaultAccountRegions[current.provider];
-        const shouldReplaceRegions = !current.regions.trim() || current.regions.trim() === currentDefaultRegion;
         return {
           ...current,
           provider: nextProvider,
-          projectId: nextProvider === "huawei" ? current.projectId : "",
-          regions: shouldReplaceRegions ? defaultAccountRegions[nextProvider] : current.regions,
         };
       }
       return { ...current, [key]: value };
@@ -3154,7 +3187,7 @@ export function CloudResourceConsole() {
     if (statusCounts.missing > 0) {
       governanceItems.push({
         title: "存在未同步资源",
-        detail: `${statusCounts.missing} 个资源尚未形成采样，优先检查账号权限、地域配置和云监控插件状态。`,
+        detail: `${statusCounts.missing} 个资源尚未形成采样，优先检查账号权限、地域发现和云监控插件状态。`,
         status: "missing",
       });
     }
@@ -3175,7 +3208,7 @@ export function CloudResourceConsole() {
     if (!governanceItems.length) {
       governanceItems.push({
         title: "全局采样状态正常",
-        detail: "当前资源已有可用采样，后续重点保持账号权限和地域配置稳定。",
+        detail: "当前资源已有可用采样，后续重点保持账号权限和地域发现稳定。",
         status: "normal",
       });
     }
@@ -3580,7 +3613,6 @@ export function CloudResourceConsole() {
             <option value="missing">未同步</option>
             <option value="offline">离线</option>
           </select>
-          <button type="button" onClick={() => void loadCloudAssets()} disabled={assetLoading}>{assetLoading ? "同步中" : "同步资产"}</button>
         </div>
 
         <div className="simple-summary">
@@ -3686,7 +3718,7 @@ export function CloudResourceConsole() {
                 <th>账号标识</th>
                 <th>来源</th>
                 <th>接入范围</th>
-                <th>地域</th>
+                <th>地域策略</th>
                 <th>资源</th>
                 <th>状态</th>
                 <th>最近同步</th>
@@ -3704,7 +3736,7 @@ export function CloudResourceConsole() {
                     <td>{account.uid}</td>
                     <td>{account.owner}</td>
                     <td>{account.scope}</td>
-                    <td>{account.regions.join("、")}</td>
+                    <td>{account.regions.length ? account.regions.join("、") : "自动发现全部地域"}</td>
                     <td>{servers.filter((server) => server.accountId === account.id).length}</td>
                     <td><StatusText status={account.status}>{accountStatusLabels[account.status]}</StatusText></td>
                     <td>{account.lastSync}</td>
@@ -3763,25 +3795,6 @@ export function CloudResourceConsole() {
           <label>
             <span>AccessKey Secret</span>
             <input type="password" value={accountForm.accessKeySecret} onChange={(event) => updateAccountForm("accessKeySecret", event.currentTarget.value)} placeholder={editingAccountId ? "留空沿用原值" : "AccessKey Secret"} />
-          </label>
-          {accountForm.provider === "huawei" ? (
-            <label>
-              <span>Project ID</span>
-              <input value={accountForm.projectId} onChange={(event) => updateAccountForm("projectId", event.currentTarget.value)} placeholder="可先留空，多个项目时填写" />
-              <small className="form-help">通常可留空自动识别；如果提示多个项目，到华为云“我的凭证 / API凭证”复制对应区域的项目ID。</small>
-            </label>
-          ) : null}
-          <label className="account-form-wide">
-            <span>地域</span>
-            <input value={accountForm.regions} onChange={(event) => updateAccountForm("regions", event.currentTarget.value)} placeholder={accountForm.provider === "huawei" ? "cn-south-1" : "cn-guangzhou,cn-shanghai"} />
-            <div className="region-shortcuts">
-              {accountRegionPresets[accountForm.provider].map((region) => (
-                <button key={region.value} type="button" onClick={() => applyRegionPreset(region.value)}>
-                  {region.label} / {region.value}
-                </button>
-              ))}
-            </div>
-            <small className="form-help">{regionInputTips[accountForm.provider]}</small>
           </label>
           <label>
             <span>采样周期（秒）</span>

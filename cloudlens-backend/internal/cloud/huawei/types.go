@@ -16,5 +16,59 @@ type Config struct {
 }
 
 type Instance = common.Instance
+
+type RDSEndpoint struct {
+	ConnectionString     string `json:"connectionString"`
+	Port                 string `json:"port"`
+	IPAddress            string `json:"ipAddress,omitempty"`
+	IPType               string `json:"ipType,omitempty"`
+	ConnectionStringType string `json:"connectionStringType,omitempty"`
+	Availability         string `json:"availability,omitempty"`
+	VPCID                string `json:"vpcId,omitempty"`
+	VSwitchID            string `json:"vSwitchId,omitempty"`
+}
+
+type RDSResourceUsage struct {
+	DBInstanceID        string   `json:"dbInstanceId,omitempty"`
+	Engine              string   `json:"engine,omitempty"`
+	DiskUsedBytes       int64    `json:"diskUsedBytes,omitempty"`
+	StorageUsagePercent *float64 `json:"storageUsagePercent,omitempty"`
+	Source              string   `json:"source,omitempty"`
+}
+
+type RDSInstance struct {
+	ID                string            `json:"id"`
+	NodeID            string            `json:"nodeId,omitempty"`
+	Name              string            `json:"name"`
+	Provider          string            `json:"provider"`
+	RegionID          string            `json:"regionId"`
+	ZoneID            string            `json:"zoneId"`
+	Engine            string            `json:"engine"`
+	EngineVersion     string            `json:"engineVersion"`
+	Status            string            `json:"status"`
+	Type              string            `json:"type,omitempty"`
+	Category          string            `json:"category,omitempty"`
+	Class             string            `json:"class,omitempty"`
+	CPU               int               `json:"cpu,omitempty"`
+	CPURaw            string            `json:"cpuRaw,omitempty"`
+	MemoryMB          int64             `json:"memoryMb,omitempty"`
+	StorageGB         int               `json:"storageGb,omitempty"`
+	StorageType       string            `json:"storageType,omitempty"`
+	NetworkType       string            `json:"networkType,omitempty"`
+	ConnectionString  string            `json:"connectionString,omitempty"`
+	Port              string            `json:"port,omitempty"`
+	VpcID             string            `json:"vpcId,omitempty"`
+	VSwitchID         string            `json:"vSwitchId,omitempty"`
+	CreatedAt         string            `json:"createdAt"`
+	ExpiredAt         string            `json:"expiredAt"`
+	PayType           string            `json:"payType"`
+	Endpoints         []RDSEndpoint     `json:"endpoints,omitempty"`
+	ResourceUsage     *RDSResourceUsage `json:"resourceUsage,omitempty"`
+	DetailErrors      []string          `json:"detailErrors,omitempty"`
+	ExpiresInDays     *int              `json:"expiresInDays,omitempty"`
+	ExpirationStatus  string            `json:"expirationStatus"`
+	ExpirationMessage string            `json:"expirationMessage"`
+}
+
 type MetricPoint = common.MetricPoint
 type MetricSeries = common.MetricSeries

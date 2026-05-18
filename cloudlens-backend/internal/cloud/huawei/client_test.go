@@ -2,6 +2,19 @@ package huawei
 
 import "testing"
 
+func TestNewClientAllowsEmptyRegionForAutoDiscovery(t *testing.T) {
+	client, err := NewClient(Config{
+		AccessKeyID:     "test-ak",
+		AccessKeySecret: "test-secret",
+	})
+	if err != nil {
+		t.Fatalf("创建华为云客户端不应强制填写地域: %v", err)
+	}
+	if client.config.MetricPeriod != "60" {
+		t.Fatalf("默认采样周期期望 60，实际 %s", client.config.MetricPeriod)
+	}
+}
+
 func TestHuaweiMetricUnitDocumentsOverviewUnits(t *testing.T) {
 	cases := map[string]string{
 		"cpu_util":                              "%",

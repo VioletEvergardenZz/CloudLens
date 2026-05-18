@@ -560,9 +560,6 @@ func validateCloudAccountInput(input cloudAccountUpsert, secretRequired bool) er
 		if strings.TrimSpace(input.AccessKeySecret) == "" {
 			return fmt.Errorf("AccessKey Secret 不能为空")
 		}
-		if len(normalizeCloudRegions(input.Regions)) == 0 {
-			return fmt.Errorf("至少填写一个地域，例如 cn-hangzhou")
-		}
 	}
 	return nil
 }

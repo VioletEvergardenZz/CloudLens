@@ -55,8 +55,8 @@ var defaultAliyunOverviewMetrics = map[string][]aliyunMetricCandidate{
 	},
 }
 
-// cloudAliyunInstances 返回当前只读 RAM 账号下的 ECS 实例列表
-// regions 参数可用于临时限定地域，未传时使用 ALIYUN_REGIONS/ALIYUN_REGION 配置。
+// cloudAliyunInstances 返回当前只读 RAM 账号下的 ECS 实例列表。
+// regions 参数仅作为调试限定范围，未传时会自动发现并采集全部可见地域。
 func (h *handler) cloudAliyunInstances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -90,6 +90,7 @@ func (h *handler) cloudAliyunInstances(w http.ResponseWriter, r *http.Request) {
 }
 
 // cloudAliyunRDSInstances 返回当前只读 RAM 账号下的 RDS 实例列表。
+// regions 参数仅作为调试限定范围，未传时会自动发现并采集全部可见地域。
 // 详情和连接地址按实例做 best-effort 补充，单个详情接口失败不会丢掉基础实例。
 func (h *handler) cloudAliyunRDSInstances(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -490,9 +491,9 @@ func humanizeAliyunCloudError(err error) string {
 		}
 		return "当前 RAM 账号权限不足，请确认 ECS、RDS 和云监控只读权限"
 	case "ALIYUN_ECS_PERMISSION_OR_REGION_ERROR":
-		return "ECS 实例读取失败，请检查 AliyunECSReadOnlyAccess 权限和账号地域配置"
+		return "ECS 实例读取失败，请检查 AliyunECSReadOnlyAccess 权限和地域发现状态"
 	case "ALIYUN_RDS_PERMISSION_OR_REGION_ERROR":
-		return "RDS 实例读取失败，请检查 AliyunRDSReadOnlyAccess 权限和账号地域配置"
+		return "RDS 实例读取失败，请检查 AliyunRDSReadOnlyAccess 权限和地域发现状态"
 	case "ALIYUN_RDS_METRIC_ERROR":
 		return "RDS 性能指标读取失败，请检查 AliyunRDSReadOnlyAccess 权限、实例地域和性能参数支持情况"
 	case "ALIYUN_CMS_PERMISSION_OR_METRIC_ERROR":

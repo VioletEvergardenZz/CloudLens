@@ -99,7 +99,6 @@ func TestNewClientNormalizesInvalidMetricPeriod(t *testing.T) {
 	client, err := NewClient(Config{
 		AccessKeyID:     "test-ak",
 		AccessKeySecret: "test-secret",
-		Region:          "cn-hangzhou",
 		MetricPeriod:    "not-a-number",
 	})
 	if err != nil {

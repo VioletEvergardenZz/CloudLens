@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
@@ -19,10 +20,12 @@ import (
 )
 
 const (
-	ProviderName             = "aliyun"
-	NamespaceECS             = "acs_ecs_dashboard"
-	NamespaceRDSPerformance  = "rds.DescribeDBInstancePerformance"
-	maxRDSPerformanceKeySize = 30
+	ProviderName              = "aliyun"
+	NamespaceECS              = "acs_ecs_dashboard"
+	NamespaceRDSPerformance   = "rds.DescribeDBInstancePerformance"
+	maxRDSPerformanceKeySize  = 30
+	maxRegionQueryConcurrency = 4
+	defaultDiscoveryRegion    = "cn-hangzhou"
 
 	expirationStatusNormal       = "normal"
 	expirationStatusExpiring     = "expiring"
@@ -46,9 +49,6 @@ func NewClient(config Config) (*Client, error) {
 	if config.AccessKeyID == "" || config.AccessKeySecret == "" {
 		return nil, fmt.Errorf("阿里云 AccessKey 未配置，请在云账号管理中新增账号，或临时设置 ALIYUN_ACCESS_KEY_ID 和 ALIYUN_ACCESS_KEY_SECRET")
 	}
-	if config.Region == "" && len(config.Regions) == 0 {
-		return nil, fmt.Errorf("阿里云地域未配置，请在云账号管理中填写地域，或临时设置 ALIYUN_REGION/ALIYUN_REGIONS")
-	}
 	return &Client{config: config}, nil
 }
 
@@ -56,14 +56,27 @@ func (c *Client) ListInstances(regions []string) ([]Instance, error) {
 	if c == nil {
 		return nil, fmt.Errorf("阿里云客户端未初始化")
 	}
-	targetRegions := normalizeRegions(regions, c.config)
+	targetRegions, autoDiscovered, err := c.resolveECSRegions(regions)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]Instance, 0)
-	for _, region := range targetRegions {
-		items, err := c.listRegionInstances(region)
-		if err != nil {
-			return nil, err
+	regionErrors := make([]string, 0)
+	successfulRegions := 0
+	for _, result := range c.listRegionInstancesConcurrently(targetRegions) {
+		if result.err != nil {
+			// 自动全地域采集时，单地域失败不能阻断其它地域，避免一个空地域或局部权限问题遮住已有资源。
+			if autoDiscovered {
+				regionErrors = append(regionErrors, fmt.Sprintf("%s: %v", result.region, result.err))
+				continue
+			}
+			return nil, result.err
 		}
-		out = append(out, items...)
+		successfulRegions++
+		out = append(out, result.items...)
+	}
+	if successfulRegions == 0 && len(regionErrors) > 0 {
+		return nil, summarizeRegionErrors("阿里云 ECS 全地域采集失败", regionErrors)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RegionID == out[j].RegionID {
@@ -78,14 +91,27 @@ func (c *Client) ListRDSInstances(regions []string) ([]RDSInstance, error) {
 	if c == nil {
 		return nil, fmt.Errorf("阿里云客户端未初始化")
 	}
-	targetRegions := normalizeRegions(regions, c.config)
+	targetRegions, autoDiscovered, err := c.resolveRDSRegions(regions)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]RDSInstance, 0)
-	for _, region := range targetRegions {
-		items, err := c.listRegionRDSInstances(region)
-		if err != nil {
-			return nil, err
+	regionErrors := make([]string, 0)
+	successfulRegions := 0
+	for _, result := range c.listRegionRDSInstancesConcurrently(targetRegions) {
+		if result.err != nil {
+			// 自动全地域采集时，单地域失败不能阻断其它地域，避免一个空地域或局部权限问题遮住已有资源。
+			if autoDiscovered {
+				regionErrors = append(regionErrors, fmt.Sprintf("%s: %v", result.region, result.err))
+				continue
+			}
+			return nil, result.err
 		}
-		out = append(out, items...)
+		successfulRegions++
+		out = append(out, result.items...)
+	}
+	if successfulRegions == 0 && len(regionErrors) > 0 {
+		return nil, summarizeRegionErrors("阿里云 RDS 全地域采集失败", regionErrors)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].RegionID == out[j].RegionID {
@@ -160,6 +186,76 @@ func (c *Client) listRegionRDSInstances(region string) ([]RDSInstance, error) {
 		}
 	}
 	return out, nil
+}
+
+type instanceRegionResult struct {
+	region string
+	items  []Instance
+	err    error
+}
+
+type rdsRegionResult struct {
+	region string
+	items  []RDSInstance
+	err    error
+}
+
+func (c *Client) listRegionInstancesConcurrently(regions []string) []instanceRegionResult {
+	if len(regions) == 0 {
+		return nil
+	}
+	results := make([]instanceRegionResult, 0, len(regions))
+	resultCh := make(chan instanceRegionResult, len(regions))
+	guard := make(chan struct{}, maxRegionQueryConcurrency)
+	var wg sync.WaitGroup
+
+	// 全地域采集会触发多次云厂商查询；这里用小并发提速，同时用 guard 控制边界，避免刷新时打满云 API。
+	for _, region := range regions {
+		region := region
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			guard <- struct{}{}
+			defer func() { <-guard }()
+			items, err := c.listRegionInstances(region)
+			resultCh <- instanceRegionResult{region: region, items: items, err: err}
+		}()
+	}
+	wg.Wait()
+	close(resultCh)
+	for result := range resultCh {
+		results = append(results, result)
+	}
+	return results
+}
+
+func (c *Client) listRegionRDSInstancesConcurrently(regions []string) []rdsRegionResult {
+	if len(regions) == 0 {
+		return nil
+	}
+	results := make([]rdsRegionResult, 0, len(regions))
+	resultCh := make(chan rdsRegionResult, len(regions))
+	guard := make(chan struct{}, maxRegionQueryConcurrency)
+	var wg sync.WaitGroup
+
+	// RDS 详情读取本身会按实例补充信息；地域层只做有限并发，兼顾首屏速度和云 API 压力。
+	for _, region := range regions {
+		region := region
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			guard <- struct{}{}
+			defer func() { <-guard }()
+			items, err := c.listRegionRDSInstances(region)
+			resultCh <- rdsRegionResult{region: region, items: items, err: err}
+		}()
+	}
+	wg.Wait()
+	close(resultCh)
+	for result := range resultCh {
+		results = append(results, result)
+	}
+	return results
 }
 
 func describeRDSInstanceAttribute(client *rds.Client, instanceID string) (rds.DBInstanceAttribute, error) {
@@ -512,6 +608,88 @@ func trafficKbitToBitRate(valueKbit int, periodSeconds int) float64 {
 		periodSeconds = 60
 	}
 	return float64(valueKbit*1000) / float64(periodSeconds)
+}
+
+func (c *Client) resolveECSRegions(requested []string) ([]string, bool, error) {
+	explicitRegions := normalizeRegions(requested, Config{})
+	if len(explicitRegions) > 0 {
+		return explicitRegions, false, nil
+	}
+	seedRegions := normalizeRegions(nil, c.config)
+	discoveredRegions, err := c.listECSRegions()
+	if err != nil {
+		if len(seedRegions) > 0 {
+			return seedRegions, true, nil
+		}
+		return nil, true, fmt.Errorf("自动发现阿里云 ECS 地域失败: %w", err)
+	}
+	return mergeRegionLists(seedRegions, discoveredRegions), true, nil
+}
+
+func (c *Client) resolveRDSRegions(requested []string) ([]string, bool, error) {
+	explicitRegions := normalizeRegions(requested, Config{})
+	if len(explicitRegions) > 0 {
+		return explicitRegions, false, nil
+	}
+	seedRegions := normalizeRegions(nil, c.config)
+	discoveredRegions, err := c.listRDSRegions()
+	if err != nil {
+		if len(seedRegions) > 0 {
+			return seedRegions, true, nil
+		}
+		return nil, true, fmt.Errorf("自动发现阿里云 RDS 地域失败: %w", err)
+	}
+	return mergeRegionLists(seedRegions, discoveredRegions), true, nil
+}
+
+func (c *Client) listECSRegions() ([]string, error) {
+	client, err := ecs.NewClientWithAccessKey(c.discoveryRegion(), c.config.AccessKeyID, c.config.AccessKeySecret)
+	if err != nil {
+		return nil, fmt.Errorf("创建 ECS 地域发现客户端失败: %w", err)
+	}
+	req := ecs.CreateDescribeRegionsRequest()
+	req.AcceptLanguage = "zh-CN"
+	resp, err := client.DescribeRegions(req)
+	if err != nil {
+		return nil, fmt.Errorf("查询 ECS 地域列表失败: %w", err)
+	}
+	regions := make([]string, 0, len(resp.Regions.Region))
+	for _, item := range resp.Regions.Region {
+		regions = append(regions, item.RegionId)
+	}
+	regions = uniqueSortedRegions(regions)
+	if len(regions) == 0 {
+		return nil, fmt.Errorf("ECS 地域列表为空")
+	}
+	return regions, nil
+}
+
+func (c *Client) listRDSRegions() ([]string, error) {
+	client, err := rds.NewClientWithAccessKey(c.discoveryRegion(), c.config.AccessKeyID, c.config.AccessKeySecret)
+	if err != nil {
+		return nil, fmt.Errorf("创建 RDS 地域发现客户端失败: %w", err)
+	}
+	req := rds.CreateDescribeRegionsRequest()
+	req.AcceptLanguage = "zh-CN"
+	resp, err := client.DescribeRegions(req)
+	if err != nil {
+		return nil, fmt.Errorf("查询 RDS 地域列表失败: %w", err)
+	}
+	regions := make([]string, 0, len(resp.Regions.RDSRegion))
+	for _, item := range resp.Regions.RDSRegion {
+		regions = append(regions, item.RegionId)
+	}
+	regions = uniqueSortedRegions(regions)
+	if len(regions) == 0 {
+		return nil, fmt.Errorf("RDS 地域列表为空")
+	}
+	return regions, nil
+}
+
+func (c *Client) discoveryRegion() string {
+	values := append([]string{c.config.Region}, c.config.Regions...)
+	values = append(values, defaultDiscoveryRegion)
+	return firstNonEmpty(values...)
 }
 
 func normalizeSamplingPeriod(period string) string {
@@ -1093,6 +1271,46 @@ func uniqueStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func uniqueSortedRegions(values []string) []string {
+	out := uniqueStrings(values)
+	sort.Strings(out)
+	return out
+}
+
+func mergeRegionLists(lists ...[]string) []string {
+	total := 0
+	for _, values := range lists {
+		total += len(values)
+	}
+	out := make([]string, 0, total)
+	seen := make(map[string]struct{}, total)
+	for _, values := range lists {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func summarizeRegionErrors(prefix string, regionErrors []string) error {
+	if len(regionErrors) == 0 {
+		return fmt.Errorf("%s", prefix)
+	}
+	message := regionErrors[0]
+	if len(regionErrors) > 1 {
+		message = fmt.Sprintf("%s；另有 %d 个地域失败", message, len(regionErrors)-1)
+	}
+	return fmt.Errorf("%s: %s", prefix, message)
 }
 
 func normalizeRegions(requested []string, config Config) []string {
