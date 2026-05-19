@@ -22,6 +22,15 @@ type PageKey =
   | "sync"
   | "settings";
 
+type AlertSectionKey = "health" | "reminders" | "rules" | "coverage";
+
+type MenuItem = {
+  key: PageKey;
+  label: string;
+  desc: string;
+  children?: Array<{ key: string; label: string; desc: string }>;
+};
+
 type Provider = "aliyun" | "huawei" | "tencent";
 type AccountStatus = "normal" | "warning" | "syncing" | "disabled";
 type ServerStatus = "running" | "warning" | "offline" | "maintenance";
@@ -445,7 +454,15 @@ type CloudAlertRule = {
   severity: CloudAlertSeverity;
   enabled: boolean;
   notifyChannels: string[];
-  evaluate: (server: CloudServer) => CloudAlertRuleResult | null;
+  evaluate: (server: CloudServer, config: CloudAlertRuleConfig) => CloudAlertRuleResult | null;
+};
+
+type CloudAlertRuleConfig = {
+  enabled: boolean;
+  severity: CloudAlertSeverity;
+  warningThreshold?: number;
+  criticalThreshold?: number;
+  notifyChannels: string[];
 };
 
 type CloudAlertReminder = {
@@ -467,6 +484,13 @@ type CloudAlertReminder = {
   suggestion: string;
   notifyChannels: string[];
   updatedAt: string;
+};
+
+type AlertWorkbenchFilter = {
+  severity?: CloudAlertSeverity;
+  ruleId?: string;
+  coverageKey?: string;
+  serverId?: string;
 };
 
 type ResourceHealthLevel = "healthy" | "watch" | "risk" | "critical";
@@ -610,36 +634,72 @@ const emptyAgentStatusCounter = (): AgentStatusCounter => ({
 
 const menuGroups: Array<{
   title: string;
-  items: Array<{ key: PageKey; label: string; desc: string }>;
+  items: MenuItem[];
 }> = [
   {
     title: "云资产",
     items: [
-      { key: "servers", label: "资源总览", desc: "ECS/RDS 资源" },
-      { key: "accounts", label: "云账号管理", desc: "账号与同步状态" },
+      { key: "servers", label: "资源总览", desc: "ECS/RDS 资源", children: [
+        { key: "overview", label: "资源看板", desc: "数量和风险概览" },
+        { key: "list", label: "资源清单", desc: "筛选和查看资源" },
+        { key: "detail", label: "资源详情", desc: "选中资源上下文" },
+      ] },
+      { key: "accounts", label: "云账号管理", desc: "账号与同步状态", children: [
+        { key: "list", label: "已接入账号", desc: "状态与操作" },
+        { key: "form", label: "账号配置", desc: "新增或编辑" },
+      ] },
       { key: "regions", label: "地域视图", desc: "按地域聚合" },
     ],
   },
   {
     title: "监控运维",
     items: [
-      { key: "monitor", label: "监控概览", desc: "ECS/RDS 指标" },
-      { key: "agents", label: "探针管理", desc: "采样覆盖与质量" },
-      { key: "alerts", label: "告警事件", desc: "告警与处置" },
+      { key: "monitor", label: "监控概览", desc: "ECS/RDS 指标", children: [
+        { key: "workspace", label: "监控工作台", desc: "选资源看指标" },
+      ] },
+      { key: "agents", label: "探针管理", desc: "采样覆盖与质量", children: [
+        { key: "overview", label: "治理总览", desc: "覆盖率和缺口" },
+        { key: "actions", label: "治理提醒", desc: "优先处理项" },
+        { key: "accounts", label: "账号覆盖", desc: "按账号查看" },
+        { key: "regions", label: "地域缺口", desc: "按地域查看" },
+        { key: "sources", label: "采样来源", desc: "来源质量" },
+      ] },
+      {
+        key: "alerts",
+        label: "告警事件",
+        desc: "告警与处置",
+        children: [
+          { key: "reminders", label: "云产品提醒", desc: "当前命中事件" },
+          { key: "health", label: "高风险资源", desc: "健康分排序" },
+          { key: "rules", label: "规则配置", desc: "阈值与渠道" },
+          { key: "coverage", label: "覆盖情况", desc: "账号产品分组" },
+        ],
+      },
     ],
   },
   {
-    title: "扩展能力",
+    title: "异常排查",
     items: [
-      { key: "ai", label: "AI 摘要", desc: "异常辅助分析" },
-      { key: "knowledge", label: "知识沉淀", desc: "经验复用与复盘" },
+      { key: "ai", label: "辅助判断", desc: "异常证据摘要", children: [
+        { key: "scope", label: "能力定位", desc: "输入和输出" },
+        { key: "analysis", label: "资源判断", desc: "异常辅助结论" },
+      ] },
+      { key: "knowledge", label: "处置知识", desc: "SOP 与复盘", children: [
+        { key: "scope", label: "沉淀规则", desc: "来源和回流" },
+        { key: "entries", label: "知识条目", desc: "处置场景" },
+      ] },
     ],
   },
   {
-    title: "系统",
+    title: "接入治理",
     items: [
-      { key: "sync", label: "同步任务", desc: "云资源同步" },
-      { key: "settings", label: "系统设置", desc: "接入配置" },
+      { key: "sync", label: "同步健康", desc: "账号与资源同步", children: [
+        { key: "scope", label: "同步说明", desc: "定位和重点" },
+        { key: "tasks", label: "任务列表", desc: "同步进度" },
+      ] },
+      { key: "settings", label: "接入边界", desc: "配置与安全约束", children: [
+        { key: "config", label: "配置边界", desc: "接入和安全" },
+      ] },
     ],
   },
 ];
@@ -2244,10 +2304,10 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "critical",
     enabled: true,
     notifyChannels: ["控制台", "后续可接入钉钉/邮件"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
       if (server.status === "running") return null;
       const resourceType = getResourceType(server);
-      const severity: CloudAlertSeverity = server.status === "offline" ? "critical" : "warning";
+      const severity: CloudAlertSeverity = server.status === "offline" ? "critical" : config.severity;
       return {
         severity,
         currentValue: serverStatusLabels[server.status],
@@ -2267,12 +2327,15 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
-      if (typeof server.cpu !== "number" || server.cpu < 75) return null;
-      const severity: CloudAlertSeverity = server.cpu >= 85 ? "critical" : "warning";
+    evaluate: (server, config) => {
+      const warningThreshold = config.warningThreshold ?? 75;
+      const criticalThreshold = config.criticalThreshold ?? 85;
+      if (typeof server.cpu !== "number" || server.cpu < warningThreshold) return null;
+      const severity: CloudAlertSeverity = server.cpu >= criticalThreshold ? "critical" : config.severity;
       return {
         severity,
         currentValue: formatPercentValue(server.cpu),
+        condition: `>= ${warningThreshold}% 预警，>= ${criticalThreshold}% 严重`,
         message: `${server.name} CPU 已达到 ${formatPercentValue(server.cpu)}`,
         suggestion: getResourceType(server) === "rds" ? "排查慢 SQL、连接数和突增查询，必要时评估规格升级" : "排查进程热点、定时任务和突发流量，必要时扩容或限流",
       };
@@ -2288,12 +2351,15 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
-      if (typeof server.memory !== "number" || server.memory < 75) return null;
-      const severity: CloudAlertSeverity = server.memory >= 85 ? "critical" : "warning";
+    evaluate: (server, config) => {
+      const warningThreshold = config.warningThreshold ?? 75;
+      const criticalThreshold = config.criticalThreshold ?? 85;
+      if (typeof server.memory !== "number" || server.memory < warningThreshold) return null;
+      const severity: CloudAlertSeverity = server.memory >= criticalThreshold ? "critical" : config.severity;
       return {
         severity,
         currentValue: formatPercentValue(server.memory),
+        condition: `>= ${warningThreshold}% 预警，>= ${criticalThreshold}% 严重`,
         message: `${server.name} 内存已达到 ${formatPercentValue(server.memory)}`,
         suggestion: "观察最近采样趋势，排查内存泄漏、缓存膨胀或数据库连接堆积",
       };
@@ -2309,13 +2375,16 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
-      if (typeof server.disk !== "number" || server.disk < 80) return null;
+    evaluate: (server, config) => {
+      const warningThreshold = config.warningThreshold ?? 80;
+      const criticalThreshold = config.criticalThreshold ?? 90;
+      if (typeof server.disk !== "number" || server.disk < warningThreshold) return null;
       const resourceType = getResourceType(server);
-      const severity: CloudAlertSeverity = server.disk >= 90 ? "critical" : "warning";
+      const severity: CloudAlertSeverity = server.disk >= criticalThreshold ? "critical" : config.severity;
       return {
         severity,
         currentValue: formatPercentValue(server.disk),
+        condition: `>= ${warningThreshold}% 预警，>= ${criticalThreshold}% 严重`,
         message: `${server.name} ${resourceType === "rds" ? "存储" : "磁盘"}水位 ${formatPercentValue(server.disk)}`,
         suggestion: resourceType === "rds" ? "确认表空间、日志和备份增长，准备扩容或清理策略" : "清理日志与临时文件，确认是否需要扩容数据盘",
       };
@@ -2331,14 +2400,16 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
+      const warningThreshold = config.warningThreshold ?? 30;
       const expiration = resolveExpirationInfo(server);
       if (expiration.status !== "expired" && expiration.status !== "expiring") return null;
+      if (typeof expiration.expiresInDays === "number" && expiration.expiresInDays > warningThreshold) return null;
       const severity: CloudAlertSeverity = expiration.status === "expired" ? "critical" : "warning";
       return {
         severity,
         currentValue: expiration.dateText ? `${expiration.text} / ${expiration.dateText}` : expiration.text,
-        condition: expiration.status === "expired" ? "已到期" : "剩余天数小于等于 30 天",
+        condition: expiration.status === "expired" ? "已到期" : `剩余天数小于等于 ${warningThreshold} 天`,
         message: `${server.name} ${expiration.status === "expired" ? "已经到期" : `将在 ${expiration.text} 后到期`}`,
         suggestion: "确认续费策略、预算归属和是否需要释放闲置资源",
       };
@@ -2354,9 +2425,9 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
       if (server.agentStatus === "online") return null;
-      const severity: CloudAlertSeverity = server.agentStatus === "offline" ? "critical" : "warning";
+      const severity: CloudAlertSeverity = server.agentStatus === "offline" ? "critical" : config.severity;
       return {
         severity,
         currentValue: agentStatusLabels[server.agentStatus],
@@ -2375,10 +2446,10 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "info",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
       if (server.publicIpType === "none" || !server.publicIp || server.publicIp === "-") return null;
       return {
-        severity: "info",
+        severity: config.severity,
         currentValue: server.publicIp,
         message: `${server.name} 存在${server.publicIpType === "eip" ? "弹性公网 IP" : "公网 IP"}`,
         suggestion: "确认安全组只开放必要端口，并为公网入口补齐负责人和告警策略",
@@ -2395,12 +2466,13 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "info",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
+      const warningThreshold = config.warningThreshold ?? 30;
       if (!isPostPaidCharge(server.chargeType)) return null;
       const runningDays = daysSince(server.createdAt);
-      if (runningDays === null || runningDays < 30) return null;
+      if (runningDays === null || runningDays < warningThreshold) return null;
       return {
-        severity: "info",
+        severity: config.severity,
         currentValue: `${server.chargeType} / ${runningDays} 天`,
         message: `${server.name} 是长期运行的按量资源`,
         suggestion: "确认是否需要转包年包月、降配或释放闲置资源",
@@ -2417,12 +2489,12 @@ const cloudAlertRules: CloudAlertRule[] = [
     severity: "warning",
     enabled: true,
     notifyChannels: ["控制台"],
-    evaluate: (server) => {
+    evaluate: (server, config) => {
       if (getResourceType(server) !== "rds") return null;
       const lockMode = server.dbLockMode?.trim();
       if (!lockMode || lockMode.toLowerCase() === "normal") return null;
       return {
-        severity: "warning",
+        severity: config.severity,
         currentValue: lockMode,
         message: `${server.name} 当前锁定状态为 ${lockMode}`,
         suggestion: server.dbLockReason ? `查看锁定原因：${server.dbLockReason}` : "进入 RDS 控制台确认锁定原因和恢复动作",
@@ -2431,13 +2503,55 @@ const cloudAlertRules: CloudAlertRule[] = [
   },
 ];
 
-const buildCloudAlertReminders = (servers: CloudServer[]): CloudAlertReminder[] => {
+const defaultAlertRuleThresholds: Record<string, Pick<CloudAlertRuleConfig, "warningThreshold" | "criticalThreshold">> = {
+  "metric-cpu": { warningThreshold: 75, criticalThreshold: 85 },
+  "metric-memory": { warningThreshold: 75, criticalThreshold: 85 },
+  "metric-disk": { warningThreshold: 80, criticalThreshold: 90 },
+  "billing-expiration": { warningThreshold: 30 },
+  "cost-postpaid-running": { warningThreshold: 30 },
+};
+
+const buildInitialAlertRuleConfigs = (): Record<string, CloudAlertRuleConfig> =>
+  Object.fromEntries(
+    cloudAlertRules.map((rule) => [
+      rule.id,
+      {
+        enabled: rule.enabled,
+        severity: rule.severity,
+        notifyChannels: [...rule.notifyChannels],
+        ...defaultAlertRuleThresholds[rule.id],
+      },
+    ])
+  );
+
+const getAlertRuleConfig = (configs: Record<string, CloudAlertRuleConfig>, rule: CloudAlertRule): CloudAlertRuleConfig => {
+  const saved = configs[rule.id];
+  return {
+    enabled: saved?.enabled ?? rule.enabled,
+    severity: saved?.severity ?? rule.severity,
+    notifyChannels: saved?.notifyChannels ?? rule.notifyChannels,
+    warningThreshold: saved?.warningThreshold ?? defaultAlertRuleThresholds[rule.id]?.warningThreshold,
+    criticalThreshold: saved?.criticalThreshold ?? defaultAlertRuleThresholds[rule.id]?.criticalThreshold,
+  };
+};
+
+const formatAlertRuleCondition = (rule: CloudAlertRule, config: CloudAlertRuleConfig) => {
+  if (rule.id === "metric-cpu" || rule.id === "metric-memory" || rule.id === "metric-disk") {
+    return `>= ${config.warningThreshold ?? 0}% 预警，>= ${config.criticalThreshold ?? 0}% 严重`;
+  }
+  if (rule.id === "billing-expiration") return `<= ${config.warningThreshold ?? 0} 天预警，已到期严重`;
+  if (rule.id === "cost-postpaid-running") return `按量资源运行超过 ${config.warningThreshold ?? 0} 天`;
+  return rule.condition;
+};
+
+const buildCloudAlertReminders = (servers: CloudServer[], configs: Record<string, CloudAlertRuleConfig>): CloudAlertReminder[] => {
   const nowText = new Date().toLocaleTimeString("zh-CN", { hour12: false });
   const reminders = servers.flatMap((server) =>
     cloudAlertRules.flatMap((rule) => {
       const resourceType = getResourceType(server);
-      if (!rule.enabled || !rule.resourceTypes.includes(resourceType) || !rule.providers.includes(server.provider)) return [];
-      const result = rule.evaluate(server);
+      const config = getAlertRuleConfig(configs, rule);
+      if (!config.enabled || !rule.resourceTypes.includes(resourceType) || !rule.providers.includes(server.provider)) return [];
+      const result = rule.evaluate(server, config);
       if (!result) return [];
       return [
         {
@@ -2453,11 +2567,11 @@ const buildCloudAlertReminders = (servers: CloudServer[]): CloudAlertReminder[] 
           severity: result.severity ?? rule.severity,
           title: result.title ?? rule.title,
           metric: rule.metric,
-          condition: result.condition ?? rule.condition,
+          condition: result.condition ?? formatAlertRuleCondition(rule, config),
           currentValue: result.currentValue,
           message: result.message,
           suggestion: result.suggestion,
-          notifyChannels: rule.notifyChannels,
+          notifyChannels: config.notifyChannels,
           updatedAt: nowText,
         },
       ];
@@ -2484,6 +2598,22 @@ const getStatusClass = (status: string) => {
 };
 
 const getPageTitle = (page: PageKey) => menuGroups.flatMap((group) => group.items).find((item) => item.key === page)?.label ?? "";
+const defaultPageSections: Partial<Record<PageKey, string>> = {
+  servers: "overview",
+  accounts: "list",
+  monitor: "workspace",
+  agents: "overview",
+  alerts: "reminders",
+  ai: "analysis",
+  knowledge: "entries",
+  sync: "tasks",
+  settings: "config",
+};
+const getPageSectionTitle = (page: PageKey, section: string) =>
+  menuGroups
+    .flatMap((group) => group.items)
+    .find((item) => item.key === page)
+    ?.children?.find((item) => item.key === section)?.label ?? "";
 
 function StatusText({ children, status }: { children: string; status: string }) {
   return <span className={`status-text ${getStatusClass(status)}`}>{children}</span>;
@@ -2571,6 +2701,8 @@ export function CloudResourceConsole() {
   const [activePage, setActivePage] = useState<PageKey>("servers");
   const [accounts, setAccounts] = useState<CloudAccount[]>(() => (USE_MOCK ? mockAccounts : []));
   const [servers, setServers] = useState<CloudServer[]>(() => (USE_MOCK ? mockServers : []));
+  const [activePageSections, setActivePageSections] = useState<Partial<Record<PageKey, string>>>(defaultPageSections);
+  const [activeAlertSection, setActiveAlertSection] = useState<AlertSectionKey>("reminders");
   const [assetLoading, setAssetLoading] = useState(!USE_MOCK);
   const [assetError, setAssetError] = useState("");
   const [assetIssues, setAssetIssues] = useState<CloudAssetIssue[]>([]);
@@ -2593,7 +2725,23 @@ export function CloudResourceConsole() {
   const [expandedTree, setExpandedTree] = useState<Record<string, boolean>>({});
   const [metricSort, setMetricSort] = useState<{ key: ServerSortKey; direction: SortDirection } | null>(null);
   const [refreshState, setRefreshState] = useState<RefreshState>(() => (USE_MOCK ? "ok" : "syncing"));
+  const [alertRuleConfigs, setAlertRuleConfigs] = useState<Record<string, CloudAlertRuleConfig>>(() => buildInitialAlertRuleConfigs());
+  const [selectedAlertRuleId, setSelectedAlertRuleId] = useState(cloudAlertRules[0]?.id ?? "");
+  const [alertFilter, setAlertFilter] = useState<AlertWorkbenchFilter>({});
   const assetLoadingRef = useRef(false);
+
+  const getActiveSection = useCallback((page: PageKey) => {
+    if (page === "alerts") return activeAlertSection;
+    return activePageSections[page] ?? defaultPageSections[page] ?? "";
+  }, [activeAlertSection, activePageSections]);
+
+  const setActiveSection = useCallback((page: PageKey, section: string) => {
+    if (page === "alerts") {
+      setActiveAlertSection(section as AlertSectionKey);
+      return;
+    }
+    setActivePageSections((current) => ({ ...current, [page]: section }));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2987,6 +3135,7 @@ export function CloudResourceConsole() {
       accessKeySecret: "",
       metricPeriod: account.metricPeriod || "60",
     });
+    setActiveSection("accounts", "form");
     setAccountNotice("编辑模式下 AccessKey 留空表示沿用原值");
   };
 
@@ -3051,6 +3200,13 @@ export function CloudResourceConsole() {
   const openResourceContext = (page: PageKey, serverId = selectedServer.id) => {
     setSelectedServerId(serverId);
     setActivePage(page);
+    if (page === "monitor") setActiveSection("monitor", "workspace");
+    if (page === "alerts") {
+      setActiveSection("alerts", "reminders");
+      setAlertFilter({ serverId });
+    }
+    if (page === "ai") setActiveSection("ai", "analysis");
+    if (page === "knowledge") setActiveSection("knowledge", "entries");
   };
 
   const visibleServers = useMemo(() => {
@@ -3128,7 +3284,7 @@ export function CloudResourceConsole() {
     return { online, stale, missing, offline };
   }, [servers]);
 
-  const cloudAlertReminders = useMemo(() => buildCloudAlertReminders(servers), [servers]);
+  const cloudAlertReminders = useMemo(() => buildCloudAlertReminders(servers, alertRuleConfigs), [alertRuleConfigs, servers]);
 
   const cloudAlertSummary = useMemo(() => {
     const critical = cloudAlertReminders.filter((item) => item.severity === "critical").length;
@@ -3141,8 +3297,52 @@ export function CloudResourceConsole() {
   const alertRuleRows = useMemo(() => {
     const counts = new Map<string, number>();
     cloudAlertReminders.forEach((item) => counts.set(item.ruleId, (counts.get(item.ruleId) ?? 0) + 1));
-    return cloudAlertRules.map((rule) => ({ ...rule, activeCount: counts.get(rule.id) ?? 0 }));
-  }, [cloudAlertReminders]);
+    return cloudAlertRules.map((rule) => {
+      const config = getAlertRuleConfig(alertRuleConfigs, rule);
+      return {
+        ...rule,
+        enabled: config.enabled,
+        severity: config.severity,
+        condition: formatAlertRuleCondition(rule, config),
+        notifyChannels: config.notifyChannels,
+        warningThreshold: config.warningThreshold,
+        criticalThreshold: config.criticalThreshold,
+        activeCount: counts.get(rule.id) ?? 0,
+      };
+    });
+  }, [alertRuleConfigs, cloudAlertReminders]);
+
+  const alertRuleSummary = useMemo(() => {
+    const enabledRules = alertRuleRows.filter((rule) => rule.enabled).length;
+    const hitRules = alertRuleRows.filter((rule) => rule.activeCount > 0).length;
+    const activeReminders = alertRuleRows.reduce((total, rule) => total + rule.activeCount, 0);
+    return { enabledRules, hitRules, activeReminders };
+  }, [alertRuleRows]);
+
+  const selectedAlertRule = alertRuleRows.find((rule) => rule.id === selectedAlertRuleId) ?? alertRuleRows[0];
+
+  const updateAlertRuleConfig = useCallback((ruleId: string, patch: Partial<CloudAlertRuleConfig>) => {
+    const rule = cloudAlertRules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    setAlertRuleConfigs((current) => ({
+      ...current,
+      [ruleId]: {
+        ...getAlertRuleConfig(current, rule),
+        ...patch,
+      },
+    }));
+  }, []);
+
+  const updateAlertRuleThreshold = useCallback((ruleId: string, key: "warningThreshold" | "criticalThreshold", rawValue: string) => {
+    const nextValue = Number(rawValue);
+    if (!Number.isFinite(nextValue)) return;
+    updateAlertRuleConfig(ruleId, { [key]: Math.max(0, nextValue) });
+  }, [updateAlertRuleConfig]);
+
+  const updateAlertRuleChannels = useCallback((ruleId: string, rawValue: string) => {
+    const channels = rawValue.split(/[，,]/).map((item) => item.trim()).filter(Boolean);
+    updateAlertRuleConfig(ruleId, { notifyChannels: channels.length ? channels : ["控制台"] });
+  }, [updateAlertRuleConfig]);
 
   const resourceHealthRows = useMemo<ResourceHealthRow[]>(() => {
     return servers
@@ -3167,6 +3367,7 @@ export function CloudResourceConsole() {
     const groups = new Map<string, {
       key: string;
       provider: Provider;
+      accountId: string;
       resourceType: ResourceType;
       accountName: string;
       total: number;
@@ -3181,6 +3382,7 @@ export function CloudResourceConsole() {
       const current = groups.get(key) ?? {
         key,
         provider: server.provider,
+        accountId: server.accountId,
         resourceType,
         accountName: account?.name ?? account?.alias ?? "未匹配账号",
         total: 0,
@@ -3203,6 +3405,27 @@ export function CloudResourceConsole() {
       return left.accountName.localeCompare(right.accountName, "zh-CN");
     });
   }, [accounts, cloudAlertReminders, servers]);
+
+  const filteredCloudAlertReminders = useMemo(() => {
+    return cloudAlertReminders.filter((item) => {
+      if (alertFilter.severity && item.severity !== alertFilter.severity) return false;
+      if (alertFilter.ruleId && item.ruleId !== alertFilter.ruleId) return false;
+      if (alertFilter.serverId && item.serverId !== alertFilter.serverId) return false;
+      if (alertFilter.coverageKey && `${item.provider}:${item.resourceType}:${item.accountId}` !== alertFilter.coverageKey) return false;
+      return true;
+    });
+  }, [alertFilter, cloudAlertReminders]);
+
+  const alertFilterText = useMemo(() => {
+    if (alertFilter.severity) return `级别：${alertSeverityLabels[alertFilter.severity]}`;
+    if (alertFilter.ruleId) return `规则：${alertRuleRows.find((rule) => rule.id === alertFilter.ruleId)?.title ?? alertFilter.ruleId}`;
+    if (alertFilter.serverId) return `资源：${servers.find((server) => server.id === alertFilter.serverId)?.name ?? alertFilter.serverId}`;
+    if (alertFilter.coverageKey) {
+      const row = alertCoverageRows.find((item) => item.key === alertFilter.coverageKey);
+      return row ? `覆盖：${providerLabels[row.provider]} / ${resourceTypeLabels[row.resourceType]} / ${row.accountName}` : "覆盖分组";
+    }
+    return "";
+  }, [alertCoverageRows, alertFilter, alertRuleRows, servers]);
 
   const agentGovernance = useMemo(() => {
     const total = servers.length;
@@ -3478,7 +3701,9 @@ export function CloudResourceConsole() {
             <tr
               className={selectedServer.id === server.id ? "selected" : ""}
               key={server.id}
-              onClick={() => setSelectedServerId(server.id)}
+              onClick={() => {
+                setSelectedServerId(server.id);
+              }}
             >
               <td className="server-name-cell">
                 <strong>{server.name}</strong>
@@ -3616,7 +3841,9 @@ export function CloudResourceConsole() {
                                                     ].filter(Boolean).join(" ")}
                                                     type="button"
                                                     key={server.id}
-                                                    onClick={() => setSelectedServerId(server.id)}
+                                                    onClick={() => {
+                                                      setSelectedServerId(server.id);
+                                                    }}
                                                   >
                                                     <span className="tree-label">{server.name}</span>
                                                     {activePage === "agents" ? <StatusText status={server.agentStatus}>{agentStatusLabels[server.agentStatus]}</StatusText> : null}
@@ -3761,15 +3988,72 @@ export function CloudResourceConsole() {
   );
 
   const renderServersPage = () => {
+    const activeSection = getActiveSection("servers");
     const selectedExpiration = resolveExpirationInfo(selectedServer);
     const selectedResourceType = getResourceType(selectedServer);
     const selectedExpirationDetail = selectedExpiration.dateText
       ? `${selectedExpiration.text} / 到期 ${selectedExpiration.dateText}`
       : selectedExpiration.message || selectedExpiration.text;
     return (
-    <div className="asset-page">
-      {renderScopeTree()}
+    <div className={activeSection === "list" ? "asset-page asset-page-with-tree" : "asset-page"}>
+      {activeSection === "list" ? renderScopeTree() : null}
       <section className="page-main-section">
+        {activeSection === "overview" ? (
+        <div className="resource-overview-board">
+          <section className="resource-overview-hero">
+            <div>
+              <span>资源可见性</span>
+              <strong>{servers.length}</strong>
+              <em>当前接入 ECS/RDS 资源</em>
+            </div>
+            <button type="button" onClick={() => setActiveSection("servers", "list")}>查看清单</button>
+          </section>
+          <section className="resource-kpi-grid">
+            <button type="button" onClick={() => { setResourceFilter("ecs"); setActiveSection("servers", "list"); }}><b>{summary.ecsCount}</b><span>ECS 实例</span></button>
+            <button type="button" onClick={() => { setResourceFilter("rds"); setActiveSection("servers", "list"); }}><b>{summary.rdsCount}</b><span>RDS 实例</span></button>
+            <button type="button" onClick={() => { setStatusFilter("warning"); setActiveSection("servers", "list"); }}><b>{summary.warningServers}</b><span>异常资源</span></button>
+            <button type="button" onClick={() => { setAgentFilter("stale"); setActiveSection("servers", "list"); }}><b>{summary.agentIssues}</b><span>监控异常</span></button>
+            <button type="button" onClick={() => setActiveSection("servers", "list")}><b>{expirationSummary.expiring}</b><span>30 天内到期</span></button>
+            <button type="button" onClick={() => setActivePage("accounts")}><b>{accounts.length}</b><span>云账号</span></button>
+          </section>
+          <section className="resource-overview-grid">
+            <article className="resource-overview-panel">
+              <div className="section-title">
+                <h3>同步状态</h3>
+                <span>{assetLoading ? "正在同步云资源" : assetError ? `同步异常：${assetError}` : `${lastSyncAt}，${refreshSummary}`}</span>
+              </div>
+              {assetIssues.length ? (
+                <div className="asset-issue-list compact" aria-label="云资源同步问题">
+                  {assetIssues.slice(0, 4).map((issue) => (
+                    <span key={issue.id}>
+                      <b>{providerLabels[issue.provider]} / {issue.accountName}</b>
+                      {resourceTypeLabels[issue.resourceType]}：{issue.message}
+                    </span>
+                  ))}
+                </div>
+              ) : <div className="resource-empty-hint">暂无局部同步问题</div>}
+            </article>
+            <article className="resource-overview-panel">
+              <div className="section-title">
+                <h3>最近关注</h3>
+                <span>按健康分和提醒数量优先处理</span>
+              </div>
+              <div className="resource-focus-list">
+                {resourceHealthRows.slice(0, 5).map((row) => (
+                  <button type="button" key={row.server.id} onClick={() => { setSelectedServerId(row.server.id); setActiveSection("servers", "detail"); }}>
+                    <strong>{row.server.name}</strong>
+                    <span>{healthLevelLabels[row.level]} / {row.score} 分 / {row.reminders.length} 条提醒</span>
+                  </button>
+                ))}
+                {!resourceHealthRows.length ? <div className="resource-empty-hint">当前没有高风险资源</div> : null}
+              </div>
+            </article>
+          </section>
+        </div>
+        ) : null}
+
+        {activeSection === "list" ? (
+        <>
         <div className="toolbar">
           <input value={keyword} onChange={(event) => setKeyword(event.currentTarget.value)} placeholder="搜索资源、账号、IP、业务或地域" />
           <select value={resourceFilter} onChange={(event) => setResourceFilter(event.currentTarget.value as ResourceType | "all")}>
@@ -3817,7 +4101,10 @@ export function CloudResourceConsole() {
         ) : null}
 
         <div className="table-panel">{renderServerTable(visibleServers)}</div>
+        </>
+        ) : null}
 
+        {activeSection === "detail" ? (
         <section className="detail-panel">
           <div className="section-title">
             <h3>资源详情</h3>
@@ -3852,15 +4139,20 @@ export function CloudResourceConsole() {
             <button type="button" onClick={() => openResourceContext("alerts")}>关联告警</button>
             <button type="button" onClick={() => openResourceContext("ai")}>AI 摘要</button>
             <button type="button" onClick={() => openResourceContext("knowledge")}>知识库</button>
+            <button type="button" onClick={() => setActiveSection("servers", "list")}>返回清单</button>
           </div>
         </section>
+        ) : null}
       </section>
     </div>
     );
   };
 
-  const renderAccountsPage = () => (
+  const renderAccountsPage = () => {
+    const activeSection = getActiveSection("accounts");
+    return (
     <section className="page-main-section">
+      {activeSection === "list" ? (
       <div className="account-list-panel">
         <div className="section-title account-list-title">
           <div>
@@ -3947,7 +4239,9 @@ export function CloudResourceConsole() {
           </table>
         </div>
       </div>
+      ) : null}
 
+      {activeSection === "form" ? (
       <div className="account-config-panel">
         <div className="section-title">
           <h3>{editingAccountId ? "编辑云平台账号" : "新增云平台账号"}</h3>
@@ -3986,8 +4280,10 @@ export function CloudResourceConsole() {
           </div>
         </div>
       </div>
+      ) : null}
     </section>
-  );
+    );
+  };
 
   const renderRegionsPage = () => (
     <section className="page-main-section">
@@ -4096,6 +4392,7 @@ export function CloudResourceConsole() {
   };
 
   const renderAgentsPage = () => {
+    const activeSection = getActiveSection("agents");
     if (USE_MOCK) {
       return (
         <section className="page-main-section">
@@ -4128,6 +4425,7 @@ export function CloudResourceConsole() {
             </button>
           </div>
         </div>
+        {activeSection === "overview" ? (
         <div className="agent-overview-grid">
           <article className="agent-overview-card primary">
             <span>可用采样覆盖率</span>
@@ -4150,6 +4448,8 @@ export function CloudResourceConsole() {
             <em>{agentGovernance.latestTimestamp ? formatMetricTime(agentGovernance.latestTimestamp) : "暂无真实采样"}</em>
           </article>
         </div>
+        ) : null}
+        {activeSection === "overview" ? (
         <div className="agent-status-lanes">
           {agentStatusOrder.map((status) => {
             const count = agentGovernance.statusCounts[status];
@@ -4166,7 +4466,9 @@ export function CloudResourceConsole() {
             );
           })}
         </div>
+        ) : null}
         <div className="agent-governance-grid">
+          {activeSection === "actions" ? (
           <section className="agent-governance-panel agent-governance-panel-wide">
             <div className="agent-panel-title">
               <strong>治理提醒</strong>
@@ -4184,6 +4486,8 @@ export function CloudResourceConsole() {
               ))}
             </div>
           </section>
+          ) : null}
+          {activeSection === "accounts" ? (
           <section className="agent-governance-panel">
             <div className="agent-panel-title">
               <strong>账号覆盖</strong>
@@ -4209,6 +4513,8 @@ export function CloudResourceConsole() {
               {!agentGovernance.accountRows.length ? <div className="agent-empty-state">暂无云账号资源</div> : null}
             </div>
           </section>
+          ) : null}
+          {activeSection === "regions" ? (
           <section className="agent-governance-panel">
             <div className="agent-panel-title">
               <strong>地域缺口</strong>
@@ -4234,6 +4540,8 @@ export function CloudResourceConsole() {
               {!agentGovernance.regionRows.length ? <div className="agent-empty-state">暂无地域资源</div> : null}
             </div>
           </section>
+          ) : null}
+          {activeSection === "sources" ? (
           <section className="agent-governance-panel agent-governance-panel-wide">
             <div className="agent-panel-title">
               <strong>采样来源质量</strong>
@@ -4251,6 +4559,7 @@ export function CloudResourceConsole() {
               {!agentGovernance.sourceRows.length ? <div className="agent-empty-state">暂无真实采样来源</div> : null}
             </div>
           </section>
+          ) : null}
         </div>
       </section>
     );
@@ -4260,10 +4569,10 @@ export function CloudResourceConsole() {
     <section className="page-main-section alert-management-page">
       <div className="alert-management-topline">
         <div className="monitor-stat-strip alert-stat-strip">
-          <span><b>严重提醒</b>{cloudAlertSummary.critical}</span>
-          <span><b>预警提醒</b>{cloudAlertSummary.warning}</span>
-          <span><b>提示提醒</b>{cloudAlertSummary.info}</span>
-          <span><b>影响资源</b>{cloudAlertSummary.affectedResources}</span>
+          <button className={alertFilter.severity === "critical" ? "active" : ""} type="button" onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({ severity: "critical" }); }}><b>严重提醒</b>{cloudAlertSummary.critical}</button>
+          <button className={alertFilter.severity === "warning" ? "active" : ""} type="button" onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({ severity: "warning" }); }}><b>预警提醒</b>{cloudAlertSummary.warning}</button>
+          <button className={alertFilter.severity === "info" ? "active" : ""} type="button" onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({ severity: "info" }); }}><b>提示提醒</b>{cloudAlertSummary.info}</button>
+          <button className={alertFilter.serverId ? "active" : ""} type="button" onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({}); }}><b>影响资源</b>{cloudAlertSummary.affectedResources}</button>
         </div>
         <div className="monitor-refresh-panel">
           <span>{refreshSummary}</span>
@@ -4273,6 +4582,7 @@ export function CloudResourceConsole() {
         </div>
       </div>
 
+      {activeAlertSection === "health" ? (
       <section className="detail-panel">
         <div className="section-title">
           <h3>高风险资源</h3>
@@ -4295,7 +4605,7 @@ export function CloudResourceConsole() {
                 const account = getAccount(row.server.accountId);
                 const resourceType = getResourceType(row.server);
                 return (
-                  <tr key={row.server.id}>
+                  <tr className={alertFilter.serverId === row.server.id ? "clickable-row active" : "clickable-row"} key={row.server.id} onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({ serverId: row.server.id }); }}>
                     <td>
                       <strong>{row.score}</strong>
                       <span> / 100</span>
@@ -4325,11 +4635,16 @@ export function CloudResourceConsole() {
           </table>
         </div>
       </section>
+      ) : null}
 
+      {activeAlertSection === "reminders" ? (
       <section className="detail-panel">
         <div className="section-title">
           <h3>云产品提醒</h3>
-          <span>基于当前接入的云产品状态、监控采样和到期信息生成提醒</span>
+          <span>
+            {alertFilterText ? `当前筛选：${alertFilterText}，共 ${filteredCloudAlertReminders.length} 条` : "点击顶部统计、规则或覆盖分组筛选提醒"}
+            {alertFilterText ? <button className="inline-clear-button" type="button" onClick={() => setAlertFilter({})}>清除筛选</button> : null}
+          </span>
         </div>
         <div className="table-panel">
           <table className="data-table cloud-alert-table">
@@ -4354,7 +4669,7 @@ export function CloudResourceConsole() {
               </tr>
             </thead>
             <tbody>
-              {cloudAlertReminders.map((reminder) => {
+              {filteredCloudAlertReminders.map((reminder) => {
                 const account = getAccount(reminder.accountId);
                 return (
                   <tr key={reminder.id}>
@@ -4378,45 +4693,127 @@ export function CloudResourceConsole() {
                   </tr>
                 );
               })}
-              {!cloudAlertReminders.length ? (
+              {!filteredCloudAlertReminders.length ? (
                 <tr>
-                  <td className="empty-cell" colSpan={7}>当前接入云产品没有命中提醒规则</td>
+                  <td className="empty-cell" colSpan={7}>{alertFilterText ? "当前筛选下没有提醒" : "当前接入云产品没有命中提醒规则"}</td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
       </section>
+      ) : null}
 
-      <div className="alert-management-grid">
+      {activeAlertSection === "rules" || activeAlertSection === "coverage" ? (
+      <div className="alert-management-grid single">
+        {activeAlertSection === "rules" ? (
         <section className="detail-panel">
           <div className="section-title">
-            <h3>规则设置</h3>
-            <span>先展示默认规则与命中数量，后续可扩展为可编辑阈值和通知渠道</span>
+            <h3>规则配置</h3>
+            <span>在控制台调整启用状态、级别、阈值和通知渠道，当前修改会立即影响本页提醒结果</span>
           </div>
-          <div className="alert-rule-list">
-            {alertRuleRows.map((rule) => (
-              <article className="alert-rule-item" key={rule.id}>
-                <div className="alert-rule-item-head">
+          <div className="alert-rule-summary">
+            <span><b>{alertRuleSummary.enabledRules}</b>启用规则</span>
+            <span><b>{alertRuleSummary.hitRules}</b>命中规则</span>
+            <span><b>{alertRuleSummary.activeReminders}</b>当前提醒</span>
+            <button className="link-button" type="button" onClick={() => setAlertRuleConfigs(buildInitialAlertRuleConfigs())}>
+              恢复默认
+            </button>
+          </div>
+          <div className="alert-rule-editor">
+            <div className="alert-rule-list" aria-label="告警规则列表">
+              {alertRuleRows.map((rule) => (
+                <button
+                  className={selectedAlertRule?.id === rule.id ? "alert-rule-list-item active" : "alert-rule-list-item"}
+                  key={rule.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAlertRuleId(rule.id);
+                    setAlertFilter({ ruleId: rule.id });
+                  }}
+                >
                   <div>
                     <strong>{rule.title}</strong>
-                    <span>{rule.metric} / {rule.condition}</span>
+                    <span>{rule.metric} / 命中 {rule.activeCount}</span>
                   </div>
                   <StatusText status={rule.enabled ? rule.severity : "disabled"}>
                     {rule.enabled ? alertSeverityLabels[rule.severity] : "停用"}
                   </StatusText>
+                </button>
+              ))}
+            </div>
+            {selectedAlertRule ? (
+              <div className="alert-rule-form">
+                <div className="alert-rule-form-head">
+                  <div>
+                    <strong>{selectedAlertRule.title}</strong>
+                    <span>{selectedAlertRule.metric} / {selectedAlertRule.condition}</span>
+                  </div>
+                  <label className="switch-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedAlertRule.enabled}
+                      onChange={(event) => updateAlertRuleConfig(selectedAlertRule.id, { enabled: event.currentTarget.checked })}
+                    />
+                    <span>启用</span>
+                  </label>
+                </div>
+                <div className="alert-rule-form-grid">
+                  <label>
+                    <span>默认级别</span>
+                    <select
+                      value={selectedAlertRule.severity}
+                      onChange={(event) => updateAlertRuleConfig(selectedAlertRule.id, { severity: event.currentTarget.value as CloudAlertSeverity })}
+                    >
+                      <option value="info">提示</option>
+                      <option value="warning">预警</option>
+                      <option value="critical">严重</option>
+                    </select>
+                  </label>
+                  {typeof selectedAlertRule.warningThreshold === "number" ? (
+                    <label>
+                      <span>{selectedAlertRule.id.startsWith("metric-") ? "预警阈值（%）" : "预警阈值（天）"}</span>
+                      <input
+                        min={0}
+                        type="number"
+                        value={selectedAlertRule.warningThreshold}
+                        onChange={(event) => updateAlertRuleThreshold(selectedAlertRule.id, "warningThreshold", event.currentTarget.value)}
+                      />
+                    </label>
+                  ) : null}
+                  {typeof selectedAlertRule.criticalThreshold === "number" ? (
+                    <label>
+                      <span>严重阈值（%）</span>
+                      <input
+                        min={0}
+                        type="number"
+                        value={selectedAlertRule.criticalThreshold}
+                        onChange={(event) => updateAlertRuleThreshold(selectedAlertRule.id, "criticalThreshold", event.currentTarget.value)}
+                      />
+                    </label>
+                  ) : null}
+                  <label className="alert-rule-channel-field">
+                    <span>通知渠道</span>
+                    <input
+                      value={selectedAlertRule.notifyChannels.join("，")}
+                      onChange={(event) => updateAlertRuleChannels(selectedAlertRule.id, event.currentTarget.value)}
+                      placeholder="控制台，钉钉，邮件"
+                    />
+                  </label>
                 </div>
                 <div className="alert-rule-item-meta">
-                  <span><b>覆盖产品</b>{rule.resourceTypes.map((type) => resourceTypeLabels[type]).join("、")}</span>
-                  <span><b>云平台</b>{rule.providers.map((provider) => providerLabels[provider]).join("、")}</span>
-                  <span><b>提醒渠道</b>{rule.notifyChannels.join("、")}</span>
-                  <span><b>当前命中</b>{rule.activeCount}</span>
+                  <span><b>覆盖产品</b>{selectedAlertRule.resourceTypes.map((type) => resourceTypeLabels[type]).join("、")}</span>
+                  <span><b>云平台</b>{selectedAlertRule.providers.map((provider) => providerLabels[provider]).join("、")}</span>
+                  <span><b>当前命中</b>{selectedAlertRule.activeCount}</span>
+                  <span><b>说明</b>当前为页面内配置，刷新后会恢复默认；后续可接后端持久化接口</span>
                 </div>
-              </article>
-            ))}
+              </div>
+            ) : null}
           </div>
         </section>
+        ) : null}
 
+        {activeAlertSection === "coverage" ? (
         <section className="detail-panel">
           <div className="section-title">
             <h3>覆盖情况</h3>
@@ -4436,7 +4833,7 @@ export function CloudResourceConsole() {
               </thead>
               <tbody>
                 {alertCoverageRows.map((row) => (
-                  <tr key={row.key}>
+                  <tr className={alertFilter.coverageKey === row.key ? "clickable-row active" : "clickable-row"} key={row.key} onClick={() => { setActiveAlertSection("reminders"); setAlertFilter({ coverageKey: row.key }); }}>
                     <td>{providerLabels[row.provider]}</td>
                     <td>{resourceTypeLabels[row.resourceType]}</td>
                     <td>{row.accountName}</td>
@@ -4454,66 +4851,103 @@ export function CloudResourceConsole() {
             </table>
           </div>
         </section>
+        ) : null}
       </div>
+      ) : null}
     </section>
   );
 
-  const renderAiPage = () => (
+  const renderAiPage = () => {
+    const activeSection = getActiveSection("ai");
+    return (
     <section className="page-main-section">
+      {activeSection === "scope" ? (
+      <div className="simple-summary">
+        <span><b>定位</b>只服务异常资源，不做独立 AI 工作台</span>
+        <span><b>输入</b>告警、指标、资源状态、采样新鲜度</span>
+        <span><b>输出</b>影响判断、可能原因、下一步检查</span>
+      </div>
+      ) : null}
+      {activeSection === "analysis" ? (
       <div className="table-panel">
         <table className="data-table">
           <thead>
             <tr>
               <th>资源</th>
-              <th>AI 分析次数</th>
-              <th>知识库命中</th>
-              <th>最近结论</th>
+              <th>触发依据</th>
+              <th>辅助结论</th>
+              <th>建议动作</th>
             </tr>
           </thead>
           <tbody>
             {servers.filter((server) => server.ai > 0 || server.alerts > 0).map((server) => (
               <tr key={server.id}>
                 <td>{server.name}</td>
-                <td>{server.ai}</td>
-                <td>{server.kb}</td>
-                <td>{server.alerts > 0 ? "存在告警，建议优先查看 AI 分析结果和知识库命中" : "暂无高风险结论"}</td>
+                <td>{server.alerts > 0 ? `关联 ${server.alerts} 条告警` : `已有 ${server.ai} 次分析记录`}</td>
+                <td>{server.alerts > 0 ? "需要结合监控曲线、同步状态和知识命中判断是否真实影响业务" : "暂无持续风险，保留为排查上下文"}</td>
+                <td>从资源详情进入关联告警，确认指标时间、账号权限和最近同步结果</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      ) : null}
     </section>
-  );
+    );
+  };
 
-  const renderKnowledgePage = () => (
+  const renderKnowledgePage = () => {
+    const activeSection = getActiveSection("knowledge");
+    return (
     <section className="page-main-section">
+      {activeSection === "scope" ? (
+      <div className="simple-summary">
+        <span><b>定位</b>只沉淀可复用处置步骤</span>
+        <span><b>来源</b>告警结案、资源治理、故障复盘</span>
+        <span><b>回流</b>命中后反哺异常排查页</span>
+      </div>
+      ) : null}
+      {activeSection === "entries" ? (
       <div className="table-panel">
         <table className="data-table">
           <thead>
             <tr>
-              <th>知识条目</th>
-              <th>适用云平台</th>
-              <th>关联资源</th>
-              <th>命中次数</th>
-              <th>说明</th>
+              <th>场景</th>
+              <th>适用范围</th>
+              <th>沉淀内容</th>
+              <th>使用方式</th>
             </tr>
           </thead>
           <tbody>
-            <tr><td>disk-cleanup</td><td>阿里云 / 华为云</td><td>huawei-db-01</td><td>1</td><td>磁盘水位过高时的清理与扩容步骤</td></tr>
-            <tr><td>order-timeout</td><td>阿里云</td><td>order-api-prod-01</td><td>3</td><td>订单接口超时的排查流程</td></tr>
-            <tr><td>agent-heartbeat-stale</td><td>多云通用</td><td>web-hk-02</td><td>1</td><td>探针心跳过期后的恢复检查</td></tr>
+            <tr><td>磁盘水位高</td><td>ECS / RDS</td><td>清理、扩容、回滚和复查步骤</td><td>资源详情命中后展示为处置建议</td></tr>
+            <tr><td>监控采样缺失</td><td>多云通用</td><td>账号权限、地域、指标名和采样周期检查</td><td>同步失败或探针异常时优先推荐</td></tr>
+            <tr><td>实例状态异常</td><td>ECS</td><td>停机、迁移、锁定、欠费和重启排查路径</td><td>告警确认后写入处理记录和复盘草稿</td></tr>
           </tbody>
         </table>
       </div>
+      ) : null}
     </section>
-  );
+    );
+  };
 
-  const renderSyncPage = () => (
+  const renderSyncPage = () => {
+    const activeSection = getActiveSection("sync");
+    return (
     <section className="page-main-section">
+      {activeSection === "tasks" ? (
       <div className="toolbar">
         <button type="button">立即同步</button>
         <button type="button">查看同步日志</button>
       </div>
+      ) : null}
+      {activeSection === "scope" ? (
+      <div className="simple-summary">
+        <span><b>定位</b>解释资源为什么没出现或指标为什么不新鲜</span>
+        <span><b>重点</b>账号级失败和单资源失败分开展示</span>
+        <span><b>回流</b>同步问题进入资源风险与排查入口</span>
+      </div>
+      ) : null}
+      {activeSection === "tasks" ? (
       <div className="table-panel">
         <table className="data-table">
           <thead>
@@ -4541,17 +4975,20 @@ export function CloudResourceConsole() {
           </tbody>
         </table>
       </div>
+      ) : null}
     </section>
-  );
+    );
+  };
 
   const renderSettingsPage = () => (
     <section className="page-main-section">
       <table className="detail-table settings-table">
         <tbody>
-          <tr><th>云账号接入</th><td>后端已接入阿里云 ECS/RDS 凭据同步与只读查询</td></tr>
-          <tr><th>探针接入</th><td>后续复用 Komari 的轻量 Agent 思路，统一上报基础监控与心跳</td></tr>
-          <tr><th>扩展能力</th><td>后续把 AI 摘要和知识沉淀挂到实例异常排查链路</td></tr>
-          <tr><th>安全边界</th><td>凭据不落前端，后端按账号维度加密保存和定时同步</td></tr>
+          <tr><th>页面定位</th><td>这里不再做宽泛系统设置，只展示当前阶段影响云账号接入、同步和排障的配置边界</td></tr>
+          <tr><th>云账号接入</th><td>后端已接入阿里云 ECS/RDS、华为云 ECS/RDS 的凭据保存、校验和只读查询</td></tr>
+          <tr><th>同步策略</th><td>资源列表和监控概览以只读同步为主；局部失败需要保留已有数据并给出账号、地域、资源类型和权限提示</td></tr>
+          <tr><th>辅助能力</th><td>AI 摘要、知识沉淀和复盘内容只挂在实例异常排查链路，不作为当前阶段独立主线</td></tr>
+          <tr><th>安全边界</th><td>凭据不落前端，后端按账号维度加密保存；当前管理接口默认匿名可访问，部署前需按环境补充访问控制</td></tr>
         </tbody>
       </table>
     </section>
@@ -4578,7 +5015,7 @@ export function CloudResourceConsole() {
             <strong>CloudLens</strong>
             <span>Multi-cloud console</span>
           </div>
-          <button className="sidebar-collapse-button" type="button" onClick={() => setSidebarHidden(true)} aria-label="隐藏左侧菜单" title="隐藏菜单">
+          <button className="sidebar-collapse-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setSidebarHidden(true)} aria-label="隐藏左侧菜单" title="隐藏菜单">
             <span aria-hidden="true">‹</span>
           </button>
         </div>
@@ -4589,17 +5026,41 @@ export function CloudResourceConsole() {
                 <span>{group.title}</span>
               </h2>
               {group.items.map((item) => (
+                <div className="menu-item-wrap" key={item.key}>
                 <button
                   className={activePage === item.key ? "menu-item active" : "menu-item"}
-                  key={item.key}
                   type="button"
-                  onClick={() => setActivePage(item.key)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setActivePage(item.key);
+                    if (item.children?.length) setActiveSection(item.key, defaultPageSections[item.key] ?? item.children[0].key);
+                  }}
                 >
                   <span className="menu-item-copy">
                     <span>{item.label}</span>
                     <small>{item.desc}</small>
                   </span>
                 </button>
+                {item.children && activePage === item.key ? (
+                  <div className="submenu-list">
+                    {item.children.map((child) => (
+                      <button
+                        className={getActiveSection(item.key) === child.key ? "submenu-item active" : "submenu-item"}
+                        key={child.key}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setActivePage(item.key);
+                          setActiveSection(item.key, child.key);
+                        }}
+                      >
+                        <span>{child.label}</span>
+                        <small>{child.desc}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                </div>
               ))}
             </section>
           ))}
@@ -4607,7 +5068,7 @@ export function CloudResourceConsole() {
       </aside>
 
       {sidebarHidden ? (
-        <button className="sidebar-reopen-button" type="button" onClick={() => setSidebarHidden(false)} aria-label="展开左侧菜单" title="展开菜单">
+        <button className="sidebar-reopen-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setSidebarHidden(false)} aria-label="展开左侧菜单" title="展开菜单">
           <span aria-hidden="true">›</span>
         </button>
       ) : null}
@@ -4615,7 +5076,7 @@ export function CloudResourceConsole() {
       <section className="admin-main">
         <header className="admin-header">
           <div>
-            <h1>{getPageTitle(activePage)}</h1>
+            <h1>{getPageSectionTitle(activePage, getActiveSection(activePage)) ? `${getPageTitle(activePage)} / ${getPageSectionTitle(activePage, getActiveSection(activePage))}` : getPageTitle(activePage)}</h1>
             <p>当前先做好阿里云 ECS/RDS 与华为云 ECS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
           </div>
           <div className="header-meta">
