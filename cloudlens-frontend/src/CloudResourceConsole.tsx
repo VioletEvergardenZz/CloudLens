@@ -2670,6 +2670,7 @@ export function CloudResourceConsole() {
 
       const overviewTasks: CloudOverviewRefreshTask[] = [];
       const issues: CloudAssetIssue[] = [];
+      const accountSyncResults = new Map<string, Pick<CloudAccount, "status" | "lastSync" | "checkMessage">>();
       const appendAssetIssue = (issue: CloudAssetIssue) => {
         issues.push(issue);
         setAssetIssues([...issues]);
@@ -2687,6 +2688,7 @@ export function CloudResourceConsole() {
           .filter((account) => account.enabled !== false)
           .map(async (account) => {
             const providerPath = encodeURIComponent(account.provider);
+            const accountIssueMessages: string[] = [];
             const loadECSRows = async () => {
               const resp = await fetchWithTimeout(`${API_BASE}/api/cloud/${providerPath}/instances?accountId=${encodeURIComponent(account.id)}`, {
                 cache: "no-store",
@@ -2773,6 +2775,7 @@ export function CloudResourceConsole() {
                   const issue = isCloudAssetIssue(reason)
                     ? reason
                     : buildCloudAssetIssue(account, loader.type, "资源同步", reason instanceof Error ? reason.message : "云资源同步失败");
+                  accountIssueMessages.push(issue.message);
                   appendAssetIssue(issue);
                   applyAccountResourceRows(account, loader.type, []);
                   return [];
@@ -2780,6 +2783,12 @@ export function CloudResourceConsole() {
               })
             );
             const accountRows = resourceRows.flat();
+            const syncedAt = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+            accountSyncResults.set(account.id, {
+              status: accountIssueMessages.length ? "warning" : "normal",
+              lastSync: syncedAt,
+              checkMessage: accountIssueMessages[0] || `资源同步完成，发现 ${accountRows.length} 个 ECS/RDS 资源`,
+            });
             if (!accountRows.length) {
               return [];
             }
@@ -2810,6 +2819,10 @@ export function CloudResourceConsole() {
       });
       setOverviewByServerId((current) => filterOverviewMapForRows(current, rows));
       setServers((current) => mergePendingServerRowsWithPrevious(rows, current));
+      setAccounts((current) => current.map((account) => {
+        const syncResult = accountSyncResults.get(account.id);
+        return syncResult ? { ...account, ...syncResult } : account;
+      }));
       setSelectedServerId((current) => (rows.some((server) => server.id === current) ? current : rows[0]?.id ?? ""));
       setLastSyncAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
       setAssetIssues(issues);
@@ -3526,6 +3539,7 @@ export function CloudResourceConsole() {
                 onClick={() => toggleTreeNode(productKey, productHasSelected)}
               >
                 <span className="tree-label">{resourceTypeLabels[product.resourceType]}</span>
+                <em>{product.rows.length}</em>
               </button>
             </div>
             {productExpanded
@@ -3545,6 +3559,7 @@ export function CloudResourceConsole() {
                           onClick={() => toggleTreeNode(providerKey, providerHasSelected)}
                         >
                           <span className="tree-label">{providerLabels[providerNode.provider]}</span>
+                          <em>{providerNode.rows.length}</em>
                         </button>
                       </div>
                       {providerExpanded
@@ -3564,6 +3579,7 @@ export function CloudResourceConsole() {
                                     onClick={() => toggleTreeNode(accountKey, accountHasSelected)}
                                   >
                                     <span className="tree-label">{accountNode.accountName}</span>
+                                    <em>{accountNode.rows.length}</em>
                                   </button>
                                 </div>
                                 {accountExpanded
@@ -3584,6 +3600,7 @@ export function CloudResourceConsole() {
                                               onClick={() => toggleTreeNode(regionKey, regionHasSelected)}
                                             >
                                               <span className="tree-label">{region}</span>
+                                              <em>{regionRows.length}</em>
                                             </button>
                                           </div>
                                           {regionExpanded
