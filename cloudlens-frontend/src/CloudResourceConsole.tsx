@@ -2700,6 +2700,9 @@ export function CloudResourceConsole() {
               return instances.map((instance) => {
                 const publicIp = instance.eipAddress?.trim() || instance.publicIps?.find((ip) => ip.trim())?.trim() || "";
                 const server = mapAliyunServer(account, instance);
+                if (server.status === "offline") {
+                  return server;
+                }
                 overviewTasks.push(async () => {
                   const overviewResp = await fetchWithTimeout(
                     `${API_BASE}/api/cloud/${providerPath}/overview?accountId=${encodeURIComponent(account.id)}&instanceId=${encodeURIComponent(instance.id)}&region=${encodeURIComponent(instance.regionId)}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}&publicIp=${encodeURIComponent(publicIp)}`,
@@ -2732,6 +2735,9 @@ export function CloudResourceConsole() {
               const instances = payload.items ?? [];
               return instances.map((instance) => {
                 const server = mapCloudRDSResource(account, instance);
+                if (server.status === "offline") {
+                  return server;
+                }
                 overviewTasks.push(async () => {
                   const overviewResp = await fetchWithTimeout(
                     `${API_BASE}/api/cloud/${providerPath}/rds/overview?accountId=${encodeURIComponent(account.id)}&dbInstanceId=${encodeURIComponent(instance.id)}&nodeId=${encodeURIComponent(instance.nodeId || "")}&region=${encodeURIComponent(instance.regionId)}&engine=${encodeURIComponent(instance.engine || "")}&minutes=30&period=${encodeURIComponent(account.metricPeriod || "60")}`,
@@ -4001,17 +4007,20 @@ export function CloudResourceConsole() {
   );
 
   const renderMonitorPage = () => {
-    const overview = overviewByServerId[selectedServer.id];
+    const selectedResourceOffline = selectedServer.status === "offline";
+    const overview = selectedResourceOffline ? undefined : overviewByServerId[selectedServer.id];
     const isRDS = getResourceType(selectedServer) === "rds";
     const metricRows = isRDS ? buildRDSMonitorRows(overview) : buildMonitorRows(overview);
     const freshness = resolveOverviewFreshness(overview);
     const snapshot = latestMetricSnapshot(overview);
     const account = getAccount(selectedServer.accountId);
     const expiration = resolveExpirationInfo(selectedServer);
-    const chartRows = metricRows.filter((item) => item.status !== "empty" || item.points > 0);
+    const chartRows = selectedResourceOffline ? [] : metricRows.filter((item) => item.status !== "empty" || item.points > 0);
     const freshnessSummary = snapshot.latestTimestamp
       ? `最近 30 分钟 ${snapshot.pointCount} 个采样点，${freshness.message}${snapshot.periodSeconds ? `，周期 ${snapshot.periodSeconds}s` : ""}`
-      : freshness.message;
+      : selectedResourceOffline
+        ? selectedServer.lastSeen || "资源已离线，监控采样不可用"
+        : freshness.message;
     return (
       <section className="page-main-section">
         <div className="monitor-topline">
