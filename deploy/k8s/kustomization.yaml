@@ -3,10 +3,11 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - serviceaccount.yaml
   - backend-configmap.yaml
   - backend-pvc.yaml
   - backend-deployment.yaml
   - backend-service.yaml
   - frontend-deployment.yaml
   - frontend-service.yaml
-
+  - network-policy.yaml

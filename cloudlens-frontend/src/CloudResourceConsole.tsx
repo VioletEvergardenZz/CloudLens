@@ -69,6 +69,7 @@ type CloudServer = {
   chargeType?: string;
   isSpot?: boolean;
   spotStrategy?: string;
+  createdAt?: string;
   expiredAt?: string;
   expiresInDays?: number;
   expirationStatus?: ExpirationStatus;
@@ -466,6 +467,19 @@ type CloudAlertReminder = {
   suggestion: string;
   notifyChannels: string[];
   updatedAt: string;
+};
+
+type ResourceHealthLevel = "healthy" | "watch" | "risk" | "critical";
+
+type ResourceHealthScore = {
+  score: number;
+  level: ResourceHealthLevel;
+  reasons: string[];
+};
+
+type ResourceHealthRow = ResourceHealthScore & {
+  server: CloudServer;
+  reminders: CloudAlertReminder[];
 };
 
 const providerLabels: Record<Provider, string> = {
@@ -1319,6 +1333,7 @@ const mapAliyunServer = (account: CloudAccount, instance: AliyunInstance, overvi
     chargeType: instance.chargeType || "",
     isSpot: instance.isSpot,
     spotStrategy: instance.spotStrategy || "",
+    createdAt: instance.createdAt || "",
     expiredAt: instance.expiredAt || "",
     expiresInDays: expiration.expiresInDays,
     expirationStatus: expiration.status,
@@ -1498,6 +1513,7 @@ const mapCloudRDSResource = (account: CloudAccount, instance: AliyunRDSInstance,
     os: [instance.engine, instance.engineVersion].filter(Boolean).join(" ") || "--",
     spec: `${classText} / ${storageText}`,
     chargeType: instance.payType || "",
+    createdAt: instance.createdAt || "",
     expiredAt: instance.expiredAt || "",
     expiresInDays: expiration.expiresInDays,
     expirationStatus: expiration.status,
@@ -2141,6 +2157,53 @@ const alertSeverityRank: Record<CloudAlertSeverity, number> = {
   info: 2,
 };
 
+const healthLevelLabels: Record<ResourceHealthLevel, string> = {
+  healthy: "健康",
+  watch: "关注",
+  risk: "风险",
+  critical: "高危",
+};
+
+const healthLevelStatus: Record<ResourceHealthLevel, string> = {
+  healthy: "normal",
+  watch: "warning",
+  risk: "warning",
+  critical: "critical",
+};
+
+const alertSeverityPenalty: Record<CloudAlertSeverity, number> = {
+  critical: 35,
+  warning: 18,
+  info: 8,
+};
+
+const daysSince = (raw?: string) => {
+  if (!raw) return null;
+  const timestamp = new Date(raw).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  return Math.max(0, Math.floor((Date.now() - timestamp) / 86400000));
+};
+
+const isPostPaidCharge = (chargeType?: string) => {
+  const normalized = (chargeType ?? "").trim().toLowerCase();
+  return normalized.includes("postpaid") || normalized.includes("post_paid") || normalized.includes("按量");
+};
+
+const calculateResourceHealthScore = (server: CloudServer, reminders: CloudAlertReminder[]): ResourceHealthScore => {
+  const penalty = reminders.reduce((total, reminder) => total + alertSeverityPenalty[reminder.severity], 0);
+  const score = Math.max(0, Math.min(100, 100 - penalty));
+  const reasons = reminders.map((item) => item.title);
+  if (!reasons.length && server.agentStatus !== "online") {
+    reasons.push(`监控状态${agentStatusLabels[server.agentStatus]}`);
+  }
+  const level: ResourceHealthLevel =
+    score < 50 ? "critical" :
+    score < 70 ? "risk" :
+    score < 90 ? "watch" :
+    "healthy";
+  return { score, level, reasons: [...new Set(reasons)].slice(0, 3) };
+};
+
 const cloudAlertRules: CloudAlertRule[] = [
   {
     id: "resource-status",
@@ -2270,6 +2333,48 @@ const cloudAlertRules: CloudAlertRule[] = [
         currentValue: agentStatusLabels[server.agentStatus],
         message: `${server.name} 监控状态为${agentStatusLabels[server.agentStatus]}`,
         suggestion: "检查云监控权限、插件采集项和实例当前运行状态",
+      };
+    },
+  },
+  {
+    id: "security-public-ip",
+    title: "公网访问面暴露",
+    resourceTypes: ["ecs"],
+    providers: ["aliyun", "huawei"],
+    metric: "公网入口",
+    condition: "存在公网 IP 或 EIP",
+    severity: "info",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (server.publicIpType === "none" || !server.publicIp || server.publicIp === "-") return null;
+      return {
+        severity: "info",
+        currentValue: server.publicIp,
+        message: `${server.name} 存在${server.publicIpType === "eip" ? "弹性公网 IP" : "公网 IP"}`,
+        suggestion: "确认安全组只开放必要端口，并为公网入口补齐负责人和告警策略",
+      };
+    },
+  },
+  {
+    id: "cost-postpaid-running",
+    title: "长期运行按量资源",
+    resourceTypes: ["ecs", "rds"],
+    providers: ["aliyun", "huawei"],
+    metric: "计费方式",
+    condition: "按量资源运行超过 30 天",
+    severity: "info",
+    enabled: true,
+    notifyChannels: ["控制台"],
+    evaluate: (server) => {
+      if (!isPostPaidCharge(server.chargeType)) return null;
+      const runningDays = daysSince(server.createdAt);
+      if (runningDays === null || runningDays < 30) return null;
+      return {
+        severity: "info",
+        currentValue: `${server.chargeType} / ${runningDays} 天`,
+        message: `${server.name} 是长期运行的按量资源`,
+        suggestion: "确认是否需要转包年包月、降配或释放闲置资源",
       };
     },
   },
@@ -2987,6 +3092,24 @@ export function CloudResourceConsole() {
     cloudAlertReminders.forEach((item) => counts.set(item.ruleId, (counts.get(item.ruleId) ?? 0) + 1));
     return cloudAlertRules.map((rule) => ({ ...rule, activeCount: counts.get(rule.id) ?? 0 }));
   }, [cloudAlertReminders]);
+
+  const resourceHealthRows = useMemo<ResourceHealthRow[]>(() => {
+    return servers
+      .map((server) => {
+        const reminders = cloudAlertReminders.filter((item) => item.serverId === server.id);
+        return {
+          server,
+          reminders,
+          ...calculateResourceHealthScore(server, reminders),
+        };
+      })
+      .filter((row) => row.reminders.length > 0 || row.score < 100)
+      .sort((left, right) => {
+        if (left.score !== right.score) return left.score - right.score;
+        return left.server.name.localeCompare(right.server.name, "zh-CN");
+      })
+      .slice(0, 8);
+  }, [cloudAlertReminders, servers]);
 
   const alertCoverageRows = useMemo(() => {
     const accountMap = new Map(accounts.map((account) => [account.id, account]));
@@ -4091,6 +4214,59 @@ export function CloudResourceConsole() {
           </button>
         </div>
       </div>
+
+      <section className="detail-panel">
+        <div className="section-title">
+          <h3>高风险资源</h3>
+          <span>按运行状态、监控采样、用量水位、到期和公网暴露计算健康分</span>
+        </div>
+        <div className="table-panel">
+          <table className="data-table resource-health-table">
+            <thead>
+              <tr>
+                <th>健康分</th>
+                <th>资源</th>
+                <th>云平台 / 账号 / 地域</th>
+                <th>状态</th>
+                <th>主要原因</th>
+                <th>提醒数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resourceHealthRows.map((row) => {
+                const account = getAccount(row.server.accountId);
+                const resourceType = getResourceType(row.server);
+                return (
+                  <tr key={row.server.id}>
+                    <td>
+                      <strong>{row.score}</strong>
+                      <span> / 100</span>
+                    </td>
+                    <td className="server-name-cell">
+                      <strong>{row.server.name}</strong>
+                      <span>{resourceTypeLabels[resourceType]} / {row.server.instanceId}</span>
+                    </td>
+                    <td className="account-cell">
+                      <strong>{providerLabels[row.server.provider]}</strong>
+                      <span>{account?.alias ?? "--"} / {row.server.region}</span>
+                    </td>
+                    <td>
+                      <StatusText status={healthLevelStatus[row.level]}>{healthLevelLabels[row.level]}</StatusText>
+                    </td>
+                    <td>{row.reasons.length ? row.reasons.join("、") : "暂无风险项"}</td>
+                    <td>{row.reminders.length}</td>
+                  </tr>
+                );
+              })}
+              {!resourceHealthRows.length ? (
+                <tr>
+                  <td className="empty-cell" colSpan={6}>当前资源健康分均为正常</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="detail-panel">
         <div className="section-title">

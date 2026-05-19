@@ -28,6 +28,8 @@ kind load docker-image cloudlens-frontend:local
 
 没有云账号也能启动。要接入真实云资源时，用 `cloud-credentials.example.yaml` 查看字段，再创建 `cloudlens-cloud-credentials` Secret，真实密钥不要提交到仓库。
 
+当前清单已经包含探针、资源限制、PVC、Secret 引用、ServiceAccount 和 NetworkPolicy。后端保持单副本是因为当前默认使用 SQLite。
+
 更完整的启动和配置说明见：
 
 ```text

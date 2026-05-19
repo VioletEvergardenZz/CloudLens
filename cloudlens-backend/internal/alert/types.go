@@ -31,6 +31,20 @@ const (
 	StatusRecorded DecisionStatus = "recorded"
 )
 
+// WorkflowStatus 表示人工处置闭环状态
+type WorkflowStatus string
+
+const (
+	// WorkflowOpen 表示待确认
+	WorkflowOpen WorkflowStatus = "open"
+	// WorkflowAcknowledged 表示已确认
+	WorkflowAcknowledged WorkflowStatus = "acknowledged"
+	// WorkflowProcessing 表示处理中
+	WorkflowProcessing WorkflowStatus = "processing"
+	// WorkflowRecovered 表示已恢复
+	WorkflowRecovered WorkflowStatus = "recovered"
+)
+
 // DecisionKind 表示决策来源类型
 type DecisionKind string
 
@@ -68,6 +82,16 @@ func parseLevel(raw string) (Level, bool) {
 	switch Level(raw) {
 	case LevelIgnore, LevelBusiness, LevelSystem, LevelFatal:
 		return Level(raw), true
+	default:
+		return "", false
+	}
+}
+
+// ParseWorkflowStatus 用于解析人工处置状态
+func ParseWorkflowStatus(raw string) (WorkflowStatus, bool) {
+	switch WorkflowStatus(raw) {
+	case WorkflowOpen, WorkflowAcknowledged, WorkflowProcessing, WorkflowRecovered:
+		return WorkflowStatus(raw), true
 	default:
 		return "", false
 	}

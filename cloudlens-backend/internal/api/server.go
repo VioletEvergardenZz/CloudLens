@@ -124,6 +124,8 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/ai/log-summary", h.aiLogSummary)
 	mux.HandleFunc("/api/config", h.updateConfig)
 	mux.HandleFunc("/api/alerts", h.alertDashboard)
+	mux.HandleFunc("/api/alerts/report", h.alertReport)
+	mux.HandleFunc("/api/alerts/", h.alertDecisionWorkflow)
 	mux.HandleFunc("/api/alert-config", h.alertConfig)
 	mux.HandleFunc("/api/alert-rules", h.alertRules)
 	mux.HandleFunc("/api/system", h.systemDashboard)

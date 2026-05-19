@@ -50,8 +50,27 @@ type Decision struct {
 	Reason   string           `json:"reason,omitempty"`
 	Explain  *DecisionExplain `json:"explain,omitempty"`
 	Analysis string           `json:"analysis,omitempty"`
+	Workflow DecisionWorkflow `json:"workflow"`
 	// KnowledgeTrace 记录当前告警与知识推荐的关联结果，便于值班回溯“当时推荐了什么”
 	KnowledgeTrace *RecommendationTrace `json:"knowledgeTrace,omitempty"`
+}
+
+// DecisionWorkflow 表示告警人工处理闭环
+type DecisionWorkflow struct {
+	Status      string                 `json:"status"`
+	Operator    string                 `json:"operator,omitempty"`
+	Note        string                 `json:"note,omitempty"`
+	UpdatedAt   string                 `json:"updatedAt,omitempty"`
+	RecoveredAt string                 `json:"recoveredAt,omitempty"`
+	Records     []DecisionWorkflowNote `json:"records,omitempty"`
+}
+
+// DecisionWorkflowNote 表示单次处理记录
+type DecisionWorkflowNote struct {
+	Status   string `json:"status"`
+	Operator string `json:"operator,omitempty"`
+	Note     string `json:"note,omitempty"`
+	At       string `json:"at"`
 }
 
 // RecommendationTrace 表示告警与知识推荐之间的一次关联快照
@@ -123,6 +142,7 @@ type alertRecord struct {
 	reason   string
 	explain  *DecisionExplain
 	analysis string
+	workflow DecisionWorkflow
 	// knowledgeTrace 是可变状态，必须通过 State 的互斥锁读写，避免并发读写竞态
 	knowledgeTrace *RecommendationTrace
 }
@@ -158,6 +178,7 @@ func (s *State) Record(result decisionResult) {
 		status:  result.status,
 		reason:  result.reason,
 		explain: copyDecisionExplain(result.explain),
+		workflow: buildDefaultWorkflow(result.at),
 	}
 	s.records = append(s.records, record)
 	if len(s.records) > maxDecisionRecords {
@@ -205,6 +226,7 @@ func (s *State) RecordDecision(decision Decision) bool {
 		reason:         strings.TrimSpace(decision.Reason),
 		explain:        copyDecisionExplainValue(decision.Explain),
 		analysis:       strings.TrimSpace(decision.Analysis),
+		workflow:       normalizeWorkflow(decision.Workflow, at),
 		knowledgeTrace: copyRecommendationTrace(decision.KnowledgeTrace),
 	}
 	s.records = append(s.records, rec)
@@ -322,6 +344,7 @@ func (s *State) GetDecision(id string) (Decision, bool) {
 			Reason:         rec.reason,
 			Explain:        copyDecisionExplainValue(rec.explain),
 			Analysis:       rec.analysis,
+			Workflow:       copyWorkflow(rec.workflow),
 			KnowledgeTrace: copyRecommendationTrace(rec.knowledgeTrace),
 		}, true
 	}
@@ -370,6 +393,52 @@ func (s *State) AttachKnowledgeTrace(id string, trace RecommendationTrace) bool 
 	return false
 }
 
+// UpdateDecisionWorkflow 更新告警处置状态并保留处理记录
+// 处置闭环属于运行态窗口数据，当前不落独立表，边界与 maxDecisionRecords 一致。
+func (s *State) UpdateDecisionWorkflow(id string, status WorkflowStatus, operator, note string, at time.Time) (Decision, bool) {
+	if s == nil {
+		return Decision{}, false
+	}
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return Decision{}, false
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	operator = strings.TrimSpace(operator)
+	note = strings.TrimSpace(note)
+	timestamp := formatTime(at)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.records) - 1; i >= 0; i-- {
+		if s.records[i].id != trimmedID {
+			continue
+		}
+		workflow := normalizeWorkflow(s.records[i].workflow, s.records[i].at)
+		workflow.Status = string(status)
+		workflow.Operator = operator
+		workflow.Note = note
+		workflow.UpdatedAt = timestamp
+		if status == WorkflowRecovered {
+			workflow.RecoveredAt = timestamp
+		} else {
+			workflow.RecoveredAt = ""
+		}
+		workflow.Records = append(workflow.Records, DecisionWorkflowNote{
+			Status:   string(status),
+			Operator: operator,
+			Note:     note,
+			At:       timestamp,
+		})
+		s.records[i].workflow = workflow
+		return decisionFromRecord(s.records[i]), true
+	}
+	return Decision{}, false
+}
+
 // UpdateRulesSummary 更新规则摘要
 func (s *State) UpdateRulesSummary(summary RulesSummary) {
 	s.mu.Lock()
@@ -412,6 +481,7 @@ func (s *State) Dashboard() Dashboard {
 			Reason:         rec.reason,
 			Explain:        copyDecisionExplainValue(rec.explain),
 			Analysis:       rec.analysis,
+			Workflow:       copyWorkflow(rec.workflow),
 			KnowledgeTrace: copyRecommendationTrace(rec.knowledgeTrace),
 		})
 	}
@@ -422,6 +492,66 @@ func (s *State) Dashboard() Dashboard {
 		Stats:     stats,
 		Rules:     rules,
 		Polling:   polling,
+	}
+}
+
+func buildDefaultWorkflow(at time.Time) DecisionWorkflow {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return DecisionWorkflow{
+		Status:    string(WorkflowOpen),
+		UpdatedAt: formatTime(at),
+	}
+}
+
+func normalizeWorkflow(raw DecisionWorkflow, fallbackAt time.Time) DecisionWorkflow {
+	status := strings.TrimSpace(raw.Status)
+	if _, ok := ParseWorkflowStatus(status); !ok {
+		status = string(WorkflowOpen)
+	}
+	raw.Status = status
+	raw.Operator = strings.TrimSpace(raw.Operator)
+	raw.Note = strings.TrimSpace(raw.Note)
+	if strings.TrimSpace(raw.UpdatedAt) == "" {
+		raw.UpdatedAt = formatTime(fallbackAt)
+	}
+	raw.RecoveredAt = strings.TrimSpace(raw.RecoveredAt)
+	if status != string(WorkflowRecovered) {
+		raw.RecoveredAt = ""
+	}
+	if len(raw.Records) > 0 {
+		raw.Records = append([]DecisionWorkflowNote(nil), raw.Records...)
+	}
+	return raw
+}
+
+func copyWorkflow(raw DecisionWorkflow) DecisionWorkflow {
+	out := normalizeWorkflow(raw, time.Now())
+	if len(out.Records) > 0 {
+		out.Records = append([]DecisionWorkflowNote(nil), out.Records...)
+	}
+	return out
+}
+
+func decisionFromRecord(rec alertRecord) Decision {
+	file := rec.file
+	if file == "" {
+		file = "-"
+	}
+	return Decision{
+		ID:             rec.id,
+		Time:           formatTime(rec.at),
+		Level:          string(rec.level),
+		Rule:           rec.rule,
+		Message:        rec.message,
+		File:           file,
+		Status:         string(rec.status),
+		Reason:         rec.reason,
+		Explain:        copyDecisionExplainValue(rec.explain),
+		Analysis:       rec.analysis,
+		Workflow:       copyWorkflow(rec.workflow),
+		KnowledgeTrace: copyRecommendationTrace(rec.knowledgeTrace),
 	}
 }
 

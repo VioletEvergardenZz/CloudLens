@@ -18,6 +18,8 @@ spec:
         app.kubernetes.io/name: cloudlens
         app.kubernetes.io/component: frontend
     spec:
+      serviceAccountName: cloudlens-frontend
+      automountServiceAccountToken: false
       containers:
         - name: frontend
           image: cloudlens-frontend:local
@@ -48,4 +50,3 @@ spec:
             limits:
               cpu: 300m
               memory: 256Mi
-
