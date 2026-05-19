@@ -1654,9 +1654,21 @@ const mergeServerRowsWithPrevious = (
   return freshRows.map((server) => {
     const previous = previousMap.get(server.id);
     if (!previous || server.status === "offline") return server;
-    if (getResourceType(server) === "rds") return server;
+    const overview = overviewMap[server.id];
+    if (getResourceType(server) === "rds") {
+      if (hasAnyMetricPoint(overview) || previous.agentStatus === "missing") return server;
+      return {
+        ...server,
+        agentStatus: previous.agentStatus,
+        cpu: previous.cpu,
+        memory: previous.memory,
+        disk: previous.disk,
+        load: previous.load,
+        lastSeen: previous.lastSeen,
+      };
+    }
 
-    const metrics = overviewMap[server.id]?.metrics ?? {};
+    const metrics = overview?.metrics ?? {};
     const next = { ...server };
     let reusedPreviousMetric = false;
 
@@ -1676,11 +1688,28 @@ const mergeServerRowsWithPrevious = (
       next.load = previous.load;
       reusedPreviousMetric = true;
     }
-    if (reusedPreviousMetric && server.agentStatus === "missing") {
-      next.agentStatus = previous.agentStatus === "online" ? "stale" : previous.agentStatus;
-      next.lastSeen = "本轮暂未返回新采样，沿用上一轮监控值";
+    if (reusedPreviousMetric) {
+      next.agentStatus = previous.agentStatus;
+      next.lastSeen = previous.lastSeen || "沿用上一轮监控状态，等待本轮采样返回";
     }
     return next;
+  });
+};
+
+const mergePendingServerRowsWithPrevious = (freshRows: CloudServer[], previousRows: CloudServer[]) => {
+  const previousMap = new Map(previousRows.map((server) => [server.id, server]));
+  return freshRows.map((server) => {
+    const previous = previousMap.get(server.id);
+    if (!previous || server.status === "offline") return server;
+    return {
+      ...server,
+      agentStatus: previous.agentStatus,
+      cpu: previous.cpu,
+      memory: previous.memory,
+      disk: previous.disk,
+      load: previous.load,
+      lastSeen: previous.lastSeen,
+    };
   });
 };
 
@@ -2595,7 +2624,10 @@ export function CloudResourceConsole() {
     if (!nextServers.length) return;
     const nextServerMap = new Map(nextServers.map((server) => [server.id, server]));
     setOverviewByServerId((current) => mergeOverviewMapWithPrevious(overviewMap, current, nextServers));
-    setServers((current) => current.map((server) => nextServerMap.get(server.id) ?? server));
+    setServers((current) => {
+      const candidateRows = current.map((server) => nextServerMap.get(server.id) ?? server);
+      return mergeServerRowsWithPrevious(candidateRows, current, overviewMap);
+    });
     setAssetIssues(nextIssues);
     setAssetError(summarizeCloudAssetIssues(nextIssues));
     setRefreshState(nextIssues.length === 0 ? "ok" : "error");
@@ -2646,7 +2678,7 @@ export function CloudResourceConsole() {
       const applyAccountResourceRows = (account: CloudAccount, resourceType: ResourceType, accountRows: CloudServer[]) => {
         setServers((current) => {
           const rowsWithoutResource = current.filter((server) => server.accountId !== account.id || getResourceType(server) !== resourceType);
-          return mergeServerRowsWithPrevious([...rowsWithoutResource, ...accountRows], current, overviewByServerId);
+          return mergePendingServerRowsWithPrevious([...rowsWithoutResource, ...accountRows], current);
         });
         setSelectedServerId((current) => current || accountRows[0]?.id || "");
       };
@@ -2747,7 +2779,7 @@ export function CloudResourceConsole() {
             }
             setServers((current) => {
               const rowsWithoutAccount = current.filter((server) => server.accountId !== account.id);
-              return mergeServerRowsWithPrevious([...rowsWithoutAccount, ...accountRows], current, overviewByServerId);
+              return mergePendingServerRowsWithPrevious([...rowsWithoutAccount, ...accountRows], current);
             });
             setSelectedServerId((current) => current || accountRows[0]?.id || "");
             return accountRows;
@@ -2771,7 +2803,7 @@ export function CloudResourceConsole() {
         return [];
       });
       setOverviewByServerId((current) => filterOverviewMapForRows(current, rows));
-      setServers((current) => mergeServerRowsWithPrevious(rows, current, overviewByServerId));
+      setServers((current) => mergePendingServerRowsWithPrevious(rows, current));
       setSelectedServerId((current) => (rows.some((server) => server.id === current) ? current : rows[0]?.id ?? ""));
       setLastSyncAt(new Date().toLocaleTimeString("zh-CN", { hour12: false }));
       setAssetIssues(issues);
