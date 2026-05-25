@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 多云监控主线轻量回归（macOS/Linux）
-# 核心目标：固定校验健康检查、降级仪表盘、云账号列表和已启用账号的首个资源/概览接口。
+# 核心目标：固定校验健康检查、降级仪表盘、云账号列表、运维体检接口和已启用账号的首个资源/概览接口。
 
 usage() {
   cat <<'EOF'
@@ -135,6 +135,10 @@ generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 health_code="$(http_code "${base}/api/health" "$tmp_dir/health.json" || true)"
 dashboard_light_code="$(http_code "${base}/api/dashboard?mode=light" "$tmp_dir/dashboard-light.json" || true)"
 accounts_code="$(http_code "${base}/api/cloud/accounts" "$tmp_dir/accounts.json" || true)"
+runtime_checks_code="$(http_code "${base}/api/runtime/checks" "$tmp_dir/runtime-checks.json" || true)"
+cloud_diagnostics_code="$(http_code "${base}/api/cloud/diagnostics" "$tmp_dir/cloud-diagnostics.json" || true)"
+cloud_risks_code="$(http_code "${base}/api/cloud/risks" "$tmp_dir/cloud-risks.json" || true)"
+inspection_report_code="$(http_code "${base}/api/cloud/inspection-report" "$tmp_dir/inspection-report.json" || true)"
 
 account_total=0
 enabled_total=0
@@ -143,86 +147,84 @@ checked_accounts=0
 if [[ "${accounts_code:-0}" == "200" ]]; then
   account_total="$(jq -r '.total // (.items // [] | length)' "$tmp_dir/accounts.json")"
   enabled_total="$(jq -r '[.items // [] | .[] | select(.enabled != false)] | length' "$tmp_dir/accounts.json")"
-  checked_accounts="$(
-    jq -cr --argjson max "$MAX_ACCOUNTS" '.items // [] | map(select(.enabled != false)) | .[:$max][]' "$tmp_dir/accounts.json" |
-    while IFS= read -r account_json; do
-      account_id="$(jq -r '.id' <<<"$account_json")"
-      account_name="$(jq -r '.name // ""' <<<"$account_json")"
-      provider="$(jq -r '.provider // "aliyun"' <<<"$account_json")"
-      account_id_q="$(url_encode "$account_id")"
+  jq -cr --argjson max "$MAX_ACCOUNTS" '.items // [] | map(select(.enabled != false)) | .[:$max][]' "$tmp_dir/accounts.json" |
+  while IFS= read -r account_json; do
+    account_id="$(jq -r '.id' <<<"$account_json")"
+    account_name="$(jq -r '.name // ""' <<<"$account_json")"
+    provider="$(jq -r '.provider // "aliyun"' <<<"$account_json")"
+    account_id_q="$(url_encode "$account_id")"
 
-      case "$provider" in
-        aliyun)
-          ecs_file="$tmp_dir/aliyun-${account_id}-ecs.json"
-          ecs_url="${base}/api/cloud/aliyun/instances?accountId=${account_id_q}"
-          ecs_code="$(http_code "$ecs_url" "$ecs_file" || true)"
-          append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "instances" "$ecs_code" "$ecs_file" "" "" "$ecs_url"
+    case "$provider" in
+      aliyun)
+        ecs_file="$tmp_dir/aliyun-${account_id}-ecs.json"
+        ecs_url="${base}/api/cloud/aliyun/instances?accountId=${account_id_q}"
+        ecs_code="$(http_code "$ecs_url" "$ecs_file" || true)"
+        append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "instances" "$ecs_code" "$ecs_file" "" "" "$ecs_url"
 
-          if [[ "$ecs_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$ecs_file")" -gt 0 ]]; then
-            instance_id="$(jq -r '.items[0].id // ""' "$ecs_file")"
-            region="$(jq -r '.items[0].regionId // ""' "$ecs_file")"
-            public_ip="$(jq -r '.items[0].eipAddress // (.items[0].publicIps[0] // "")' "$ecs_file")"
-            overview_file="$tmp_dir/aliyun-${account_id}-ecs-overview.json"
-            overview_url="${base}/api/cloud/aliyun/overview?accountId=${account_id_q}&instanceId=$(url_encode "$instance_id")&region=$(url_encode "$region")&minutes=30&publicIp=$(url_encode "$public_ip")"
-            overview_code="$(http_code "$overview_url" "$overview_file" || true)"
-            append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "overview" "$overview_code" "$overview_file" "$region" "$instance_id" "$overview_url"
-          fi
+        if [[ "$ecs_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$ecs_file")" -gt 0 ]]; then
+          instance_id="$(jq -r '.items[0].id // ""' "$ecs_file")"
+          region="$(jq -r '.items[0].regionId // ""' "$ecs_file")"
+          public_ip="$(jq -r '.items[0].eipAddress // (.items[0].publicIps[0] // "")' "$ecs_file")"
+          overview_file="$tmp_dir/aliyun-${account_id}-ecs-overview.json"
+          overview_url="${base}/api/cloud/aliyun/overview?accountId=${account_id_q}&instanceId=$(url_encode "$instance_id")&region=$(url_encode "$region")&minutes=30&publicIp=$(url_encode "$public_ip")"
+          overview_code="$(http_code "$overview_url" "$overview_file" || true)"
+          append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "overview" "$overview_code" "$overview_file" "$region" "$instance_id" "$overview_url"
+        fi
 
-          rds_file="$tmp_dir/aliyun-${account_id}-rds.json"
-          rds_url="${base}/api/cloud/aliyun/rds/instances?accountId=${account_id_q}"
-          rds_code="$(http_code "$rds_url" "$rds_file" || true)"
-          append_cloud_check "$provider" "$account_id" "$account_name" "rds" "instances" "$rds_code" "$rds_file" "" "" "$rds_url"
+        rds_file="$tmp_dir/aliyun-${account_id}-rds.json"
+        rds_url="${base}/api/cloud/aliyun/rds/instances?accountId=${account_id_q}"
+        rds_code="$(http_code "$rds_url" "$rds_file" || true)"
+        append_cloud_check "$provider" "$account_id" "$account_name" "rds" "instances" "$rds_code" "$rds_file" "" "" "$rds_url"
 
-          if [[ "$rds_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$rds_file")" -gt 0 ]]; then
-            db_id="$(jq -r '.items[0].id // ""' "$rds_file")"
-            db_region="$(jq -r '.items[0].regionId // ""' "$rds_file")"
-            engine="$(jq -r '.items[0].engine // ""' "$rds_file")"
-            rds_overview_file="$tmp_dir/aliyun-${account_id}-rds-overview.json"
-            rds_overview_url="${base}/api/cloud/aliyun/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
-            rds_overview_code="$(http_code "$rds_overview_url" "$rds_overview_file" || true)"
-            append_cloud_check "$provider" "$account_id" "$account_name" "rds" "overview" "$rds_overview_code" "$rds_overview_file" "$db_region" "$db_id" "$rds_overview_url"
-          fi
-          ;;
-        huawei)
-          ecs_file="$tmp_dir/huawei-${account_id}-ecs.json"
-          ecs_url="${base}/api/cloud/huawei/instances?accountId=${account_id_q}"
-          ecs_code="$(http_code "$ecs_url" "$ecs_file" || true)"
-          append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "instances" "$ecs_code" "$ecs_file" "" "" "$ecs_url"
+        if [[ "$rds_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$rds_file")" -gt 0 ]]; then
+          db_id="$(jq -r '.items[0].id // ""' "$rds_file")"
+          db_region="$(jq -r '.items[0].regionId // ""' "$rds_file")"
+          engine="$(jq -r '.items[0].engine // ""' "$rds_file")"
+          rds_overview_file="$tmp_dir/aliyun-${account_id}-rds-overview.json"
+          rds_overview_url="${base}/api/cloud/aliyun/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
+          rds_overview_code="$(http_code "$rds_overview_url" "$rds_overview_file" || true)"
+          append_cloud_check "$provider" "$account_id" "$account_name" "rds" "overview" "$rds_overview_code" "$rds_overview_file" "$db_region" "$db_id" "$rds_overview_url"
+        fi
+        ;;
+      huawei)
+        ecs_file="$tmp_dir/huawei-${account_id}-ecs.json"
+        ecs_url="${base}/api/cloud/huawei/instances?accountId=${account_id_q}"
+        ecs_code="$(http_code "$ecs_url" "$ecs_file" || true)"
+        append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "instances" "$ecs_code" "$ecs_file" "" "" "$ecs_url"
 
-          if [[ "$ecs_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$ecs_file")" -gt 0 ]]; then
-            instance_id="$(jq -r '.items[0].id // ""' "$ecs_file")"
-            region="$(jq -r '.items[0].regionId // ""' "$ecs_file")"
-            overview_file="$tmp_dir/huawei-${account_id}-ecs-overview.json"
-            overview_url="${base}/api/cloud/huawei/overview?accountId=${account_id_q}&instanceId=$(url_encode "$instance_id")&region=$(url_encode "$region")&minutes=30"
-            overview_code="$(http_code "$overview_url" "$overview_file" || true)"
-            append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "overview" "$overview_code" "$overview_file" "$region" "$instance_id" "$overview_url"
-          fi
+        if [[ "$ecs_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$ecs_file")" -gt 0 ]]; then
+          instance_id="$(jq -r '.items[0].id // ""' "$ecs_file")"
+          region="$(jq -r '.items[0].regionId // ""' "$ecs_file")"
+          overview_file="$tmp_dir/huawei-${account_id}-ecs-overview.json"
+          overview_url="${base}/api/cloud/huawei/overview?accountId=${account_id_q}&instanceId=$(url_encode "$instance_id")&region=$(url_encode "$region")&minutes=30"
+          overview_code="$(http_code "$overview_url" "$overview_file" || true)"
+          append_cloud_check "$provider" "$account_id" "$account_name" "ecs" "overview" "$overview_code" "$overview_file" "$region" "$instance_id" "$overview_url"
+        fi
 
-          rds_file="$tmp_dir/huawei-${account_id}-rds.json"
-          rds_url="${base}/api/cloud/huawei/rds/instances?accountId=${account_id_q}"
-          rds_code="$(http_code "$rds_url" "$rds_file" || true)"
-          append_cloud_check "$provider" "$account_id" "$account_name" "rds" "instances" "$rds_code" "$rds_file" "" "" "$rds_url"
+        rds_file="$tmp_dir/huawei-${account_id}-rds.json"
+        rds_url="${base}/api/cloud/huawei/rds/instances?accountId=${account_id_q}"
+        rds_code="$(http_code "$rds_url" "$rds_file" || true)"
+        append_cloud_check "$provider" "$account_id" "$account_name" "rds" "instances" "$rds_code" "$rds_file" "" "" "$rds_url"
 
-          if [[ "$rds_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$rds_file")" -gt 0 ]]; then
-            db_id="$(jq -r '.items[0].id // ""' "$rds_file")"
-            node_id="$(jq -r '.items[0].nodeId // ""' "$rds_file")"
-            db_region="$(jq -r '.items[0].regionId // ""' "$rds_file")"
-            engine="$(jq -r '.items[0].engine // ""' "$rds_file")"
-            rds_overview_file="$tmp_dir/huawei-${account_id}-rds-overview.json"
-            rds_overview_url="${base}/api/cloud/huawei/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&nodeId=$(url_encode "$node_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
-            rds_overview_code="$(http_code "$rds_overview_url" "$rds_overview_file" || true)"
-            append_cloud_check "$provider" "$account_id" "$account_name" "rds" "overview" "$rds_overview_code" "$rds_overview_file" "$db_region" "$db_id" "$rds_overview_url"
-          fi
-          ;;
-        *)
-          unsupported_file="$tmp_dir/unsupported-${account_id}.json"
-          jq -n --arg error "不支持的云平台: ${provider}" '{error:$error}' >"$unsupported_file"
-          append_cloud_check "$provider" "$account_id" "$account_name" "unknown" "instances" 0 "$unsupported_file" "" "" ""
-          ;;
-      esac
-    done
-    jq -s 'map(.accountId) | unique | length' "$CLOUD_CHECKS_FILE"
-  )"
+        if [[ "$rds_code" == "200" ]] && [[ "$(jq -r '.items // [] | length' "$rds_file")" -gt 0 ]]; then
+          db_id="$(jq -r '.items[0].id // ""' "$rds_file")"
+          node_id="$(jq -r '.items[0].nodeId // ""' "$rds_file")"
+          db_region="$(jq -r '.items[0].regionId // ""' "$rds_file")"
+          engine="$(jq -r '.items[0].engine // ""' "$rds_file")"
+          rds_overview_file="$tmp_dir/huawei-${account_id}-rds-overview.json"
+          rds_overview_url="${base}/api/cloud/huawei/rds/overview?accountId=${account_id_q}&dbInstanceId=$(url_encode "$db_id")&nodeId=$(url_encode "$node_id")&region=$(url_encode "$db_region")&engine=$(url_encode "$engine")&minutes=30"
+          rds_overview_code="$(http_code "$rds_overview_url" "$rds_overview_file" || true)"
+          append_cloud_check "$provider" "$account_id" "$account_name" "rds" "overview" "$rds_overview_code" "$rds_overview_file" "$db_region" "$db_id" "$rds_overview_url"
+        fi
+        ;;
+      *)
+        unsupported_file="$tmp_dir/unsupported-${account_id}.json"
+        jq -n --arg error "不支持的云平台: ${provider}" '{error:$error}' >"$unsupported_file"
+        append_cloud_check "$provider" "$account_id" "$account_name" "unknown" "instances" 0 "$unsupported_file" "" "" ""
+        ;;
+    esac
+  done
+  checked_accounts="$(jq -s 'map(.accountId) | unique | length' "$CLOUD_CHECKS_FILE")"
 fi
 
 cloud_failed="$(jq -s '[.[] | select(.ok != true)] | length' "$CLOUD_CHECKS_FILE")"
@@ -234,6 +236,10 @@ jq -n \
   --argjson healthCode "${health_code:-0}" \
   --argjson dashboardLightCode "${dashboard_light_code:-0}" \
   --argjson accountsCode "${accounts_code:-0}" \
+  --argjson runtimeChecksCode "${runtime_checks_code:-0}" \
+  --argjson cloudDiagnosticsCode "${cloud_diagnostics_code:-0}" \
+  --argjson cloudRisksCode "${cloud_risks_code:-0}" \
+  --argjson inspectionReportCode "${inspection_report_code:-0}" \
   --argjson accountTotal "${account_total:-0}" \
   --argjson enabledTotal "${enabled_total:-0}" \
   --argjson checkedAccounts "${checked_accounts:-0}" \
@@ -247,7 +253,11 @@ jq -n \
     checks: {
       health: {code: $healthCode, pass: ($healthCode == 200)},
       dashboardLight: {code: $dashboardLightCode, pass: ($dashboardLightCode == 200)},
-      cloudAccounts: {code: $accountsCode, total: $accountTotal, enabled: $enabledTotal, pass: ($accountsCode == 200)}
+      cloudAccounts: {code: $accountsCode, total: $accountTotal, enabled: $enabledTotal, pass: ($accountsCode == 200)},
+      runtimeChecks: {code: $runtimeChecksCode, pass: ($runtimeChecksCode == 200)},
+      cloudDiagnostics: {code: $cloudDiagnosticsCode, pass: ($cloudDiagnosticsCode == 200)},
+      cloudRisks: {code: $cloudRisksCode, pass: ($cloudRisksCode == 200)},
+      inspectionReport: {code: $inspectionReportCode, pass: ($inspectionReportCode == 200)}
     },
     cloudResources: {
       skipped: ($enabledTotal == 0),
@@ -261,6 +271,10 @@ jq -n \
       ($healthCode == 200) and
       ($dashboardLightCode == 200) and
       ($accountsCode == 200) and
+      ($runtimeChecksCode == 200) and
+      ($cloudDiagnosticsCode == 200) and
+      ($cloudRisksCode == 200) and
+      ($inspectionReportCode == 200) and
       ($cloudFailed == 0)
     )
   }' >"$OUTPUT_FILE"

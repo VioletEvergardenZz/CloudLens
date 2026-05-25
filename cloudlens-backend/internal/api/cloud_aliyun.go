@@ -70,20 +70,22 @@ func (h *handler) cloudAliyunInstances(w http.ResponseWriter, r *http.Request) {
 	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
 	items, err := client.ListInstances(regions)
 	if err != nil {
+		if h.writeCloudSnapshotFallback(w, account, aliyuncloud.ProviderName, "ecs", err, humanizeAliyunCloudError, classifyAliyunCloudError) {
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": humanizeAliyunCloudError(err),
 			"code":  classifyAliyunCloudError(err),
 		})
 		return
 	}
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID
-	}
+	h.saveCloudResourceSnapshot(account, "ecs", items)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"accountId": accountID,
+		"accountId": cloudAccountID(account),
 		"ok":        true,
 		"provider":  aliyuncloud.ProviderName,
+		"resource":  "ecs",
+		"source":    "live",
 		"items":     items,
 		"total":     len(items),
 	})
@@ -105,21 +107,22 @@ func (h *handler) cloudAliyunRDSInstances(w http.ResponseWriter, r *http.Request
 	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
 	items, err := client.ListRDSInstances(regions)
 	if err != nil {
+		if h.writeCloudSnapshotFallback(w, account, aliyuncloud.ProviderName, "rds", err, humanizeAliyunCloudError, classifyAliyunCloudError) {
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": humanizeAliyunCloudError(err),
 			"code":  classifyAliyunCloudError(err),
 		})
 		return
 	}
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID
-	}
+	h.saveCloudResourceSnapshot(account, "rds", items)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"accountId": accountID,
+		"accountId": cloudAccountID(account),
 		"ok":        true,
 		"provider":  aliyuncloud.ProviderName,
 		"resource":  "rds",
+		"source":    "live",
 		"items":     items,
 		"total":     len(items),
 	})

@@ -1,6 +1,6 @@
 // 本文件用于云账号本地持久化。
-// 文件职责：保存云厂商 ECS 只读账号配置，并对 AccessKey Secret 做本机加密落盘。
-// 边界与容错：只保存控制台录入的查询凭据，不负责云资源缓存与采集调度。
+// 文件职责：保存云厂商 ECS/RDS 只读账号配置，并对 AccessKey Secret 做本机加密落盘。
+// 边界与容错：保存控制台录入的查询凭据，并保留最近一次资源快照用于运行时降级。
 
 package api
 
@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 const (
 	defaultCloudDataDir = "data/cloud"
 	cloudTimeLayout     = time.RFC3339Nano
+	cloudSecretKeyPerm  = 0o600
 )
 
 type cloudAccountStore struct {
@@ -65,6 +67,18 @@ type cloudAccountUpsert struct {
 	Regions         []string `json:"regions"`
 	MetricPeriod    string   `json:"metricPeriod"`
 	Enabled         *bool    `json:"enabled"`
+}
+
+type cloudResourceSnapshot struct {
+	AccountID     int64           `json:"accountId"`
+	Provider      string          `json:"provider"`
+	ResourceType  string          `json:"resourceType"`
+	PayloadJSON   json.RawMessage `json:"-"`
+	Total         int             `json:"total"`
+	Source        string          `json:"source"`
+	LastSuccessAt string          `json:"lastSuccessAt"`
+	LastError     string          `json:"lastError,omitempty"`
+	UpdatedAt     string          `json:"updatedAt"`
 }
 
 type cloudSecretCodec struct {
@@ -299,6 +313,9 @@ func (s *cloudAccountStore) Delete(id int64) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := s.db.Exec(`DELETE FROM cloud_resource_snapshots WHERE account_id = ?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM cloud_accounts WHERE id = ?`, id)
 	return err
 }
@@ -370,6 +387,132 @@ func (s *cloudAccountStore) HuaweiConfig(id int64) (huaweicloud.Config, *cloudAc
 	}, account, nil
 }
 
+func (s *cloudAccountStore) SaveResourceSnapshot(accountID int64, provider, resourceType string, items any, source string) error {
+	if s == nil || s.db == nil || accountID <= 0 {
+		return nil
+	}
+	normalizedProvider, err := validateCloudProvider(provider)
+	if err != nil {
+		return err
+	}
+	normalizedResourceType, err := normalizeCloudResourceType(resourceType)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(items)
+	if err != nil {
+		return fmt.Errorf("序列化云资源快照失败: %w", err)
+	}
+	now := formatCloudTime(time.Now().UTC())
+	trimmedSource := strings.TrimSpace(source)
+	if trimmedSource == "" {
+		trimmedSource = "live"
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err = s.db.Exec(`
+		INSERT INTO cloud_resource_snapshots (
+			account_id, provider, resource_type, payload_json, total, source, last_success_at, last_error, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)
+		ON CONFLICT(account_id, resource_type) DO UPDATE SET
+			provider = excluded.provider,
+			payload_json = excluded.payload_json,
+			total = excluded.total,
+			source = excluded.source,
+			last_success_at = excluded.last_success_at,
+			last_error = '',
+			updated_at = excluded.updated_at
+	`,
+		accountID,
+		normalizedProvider,
+		normalizedResourceType,
+		string(payload),
+		countCloudSnapshotItems(items),
+		trimmedSource,
+		now,
+		now,
+	)
+	if err != nil {
+		return fmt.Errorf("保存云资源快照失败: %w", err)
+	}
+	return nil
+}
+
+func (s *cloudAccountStore) RecordResourceSnapshotError(accountID int64, resourceType, message string) error {
+	if s == nil || s.db == nil || accountID <= 0 {
+		return nil
+	}
+	normalizedResourceType, err := normalizeCloudResourceType(resourceType)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err = s.db.Exec(`
+		UPDATE cloud_resource_snapshots
+		SET last_error = ?, updated_at = ?
+		WHERE account_id = ? AND resource_type = ?
+	`, strings.TrimSpace(message), formatCloudTime(time.Now().UTC()), accountID, normalizedResourceType)
+	if err != nil {
+		return fmt.Errorf("记录云资源快照错误失败: %w", err)
+	}
+	return nil
+}
+
+func (s *cloudAccountStore) GetResourceSnapshot(accountID int64, resourceType string) (*cloudResourceSnapshot, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("云账号存储未初始化")
+	}
+	if accountID <= 0 {
+		return nil, fmt.Errorf("云账号 ID 不合法")
+	}
+	normalizedResourceType, err := normalizeCloudResourceType(resourceType)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRow(`
+		SELECT account_id, provider, resource_type, payload_json, total, source, last_success_at, last_error, updated_at
+		FROM cloud_resource_snapshots
+		WHERE account_id = ? AND resource_type = ?
+	`, accountID, normalizedResourceType)
+	item, err := scanCloudResourceSnapshot(row)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *cloudAccountStore) ListResourceSnapshots() ([]cloudResourceSnapshot, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(`
+		SELECT account_id, provider, resource_type, payload_json, total, source, last_success_at, last_error, updated_at
+		FROM cloud_resource_snapshots
+		ORDER BY updated_at DESC, account_id DESC, resource_type ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]cloudResourceSnapshot, 0)
+	for rows.Next() {
+		item, err := scanCloudResourceSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func newCloudSecretCodec(keyPath string) (*cloudSecretCodec, error) {
 	key, err := loadOrCreateCloudSecretKey(keyPath)
 	if err != nil {
@@ -420,6 +563,9 @@ func (c *cloudSecretCodec) Decrypt(cipherText string) (string, error) {
 
 func loadOrCreateCloudSecretKey(path string) ([]byte, error) {
 	if data, err := os.ReadFile(path); err == nil {
+		if err := tightenCloudSecretKeyPerm(path); err != nil {
+			return nil, err
+		}
 		decoded, err := hex.DecodeString(strings.TrimSpace(string(data)))
 		if err != nil {
 			return nil, fmt.Errorf("decode cloud secret key failed: %w", err)
@@ -435,13 +581,31 @@ func loadOrCreateCloudSecretKey(path string) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		return nil, fmt.Errorf("create cloud secret key failed: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(key)), cloudSecretKeyPerm); err != nil {
 		return nil, fmt.Errorf("write cloud secret key failed: %w", err)
 	}
 	return key, nil
 }
 
+func tightenCloudSecretKeyPerm(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat cloud secret key failed: %w", err)
+	}
+	if info.Mode().Perm() == cloudSecretKeyPerm {
+		return nil
+	}
+	if err := os.Chmod(path, cloudSecretKeyPerm); err != nil {
+		return fmt.Errorf("chmod cloud secret key failed: %w", err)
+	}
+	return nil
+}
+
 type cloudAccountScanner interface {
+	Scan(dest ...any) error
+}
+
+type cloudResourceSnapshotScanner interface {
 	Scan(dest ...any) error
 }
 
@@ -479,6 +643,29 @@ func scanCloudAccount(row cloudAccountScanner) (cloudAccountRecord, error) {
 	return item, nil
 }
 
+func scanCloudResourceSnapshot(row cloudResourceSnapshotScanner) (cloudResourceSnapshot, error) {
+	var item cloudResourceSnapshot
+	var payload string
+	if err := row.Scan(
+		&item.AccountID,
+		&item.Provider,
+		&item.ResourceType,
+		&payload,
+		&item.Total,
+		&item.Source,
+		&item.LastSuccessAt,
+		&item.LastError,
+		&item.UpdatedAt,
+	); err != nil {
+		return item, err
+	}
+	item.PayloadJSON = json.RawMessage(strings.TrimSpace(payload))
+	if len(item.PayloadJSON) == 0 {
+		item.PayloadJSON = json.RawMessage("[]")
+	}
+	return item, nil
+}
+
 func migrateCloudAccountStore(db *sql.DB) error {
 	if db == nil {
 		return fmt.Errorf("cloud sqlite is nil")
@@ -502,6 +689,20 @@ func migrateCloudAccountStore(db *sql.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_cloud_accounts_provider_enabled
 			ON cloud_accounts(provider, enabled, updated_at DESC);`,
+		`CREATE TABLE IF NOT EXISTS cloud_resource_snapshots (
+			account_id INTEGER NOT NULL,
+			provider TEXT NOT NULL,
+			resource_type TEXT NOT NULL,
+			payload_json TEXT NOT NULL DEFAULT '[]',
+			total INTEGER NOT NULL DEFAULT 0,
+			source TEXT NOT NULL DEFAULT '',
+			last_success_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(account_id, resource_type)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_cloud_resource_snapshots_provider
+			ON cloud_resource_snapshots(provider, resource_type, updated_at DESC);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -570,7 +771,19 @@ func validateCloudProvider(provider string) (string, error) {
 	case aliyuncloud.ProviderName, huaweicloud.ProviderName:
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("当前仅支持阿里云 ECS 账号和华为云 ECS 账号")
+		return "", fmt.Errorf("当前仅支持阿里云 ECS/RDS 账号和华为云 ECS/RDS 账号")
+	}
+}
+
+func normalizeCloudResourceType(resourceType string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(resourceType))
+	switch normalized {
+	case "ecs", "instance", "instances", "server", "servers":
+		return "ecs", nil
+	case "rds", "db", "database", "databases":
+		return "rds", nil
+	default:
+		return "", fmt.Errorf("不支持的云资源类型")
 	}
 }
 
@@ -580,6 +793,25 @@ func normalizeCloudProvider(provider string) string {
 		return aliyuncloud.ProviderName
 	}
 	return normalized
+}
+
+func countCloudSnapshotItems(value any) int {
+	if value == nil {
+		return 0
+	}
+	rv := reflect.ValueOf(value)
+	for rv.IsValid() && (rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface) {
+		if rv.IsNil() {
+			return 0
+		}
+		rv = rv.Elem()
+	}
+	switch rv.Kind() {
+	case reflect.Array, reflect.Slice:
+		return rv.Len()
+	default:
+		return 1
+	}
 }
 
 func resolveCloudDataDir(raw string) string {

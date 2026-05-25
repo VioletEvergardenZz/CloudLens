@@ -41,6 +41,7 @@ go build -o bin/cloudlens-server ./cmd
 - `huawei_access_key_secret`
 - `huawei_region` / `huawei_regions`：可选，仅用于环境变量单账号兜底或临时限定调试；控制台云账号默认自动发现全部地域
 - `huawei_metric_period`
+- `api_cors_origins`：可选，未配置时默认放开跨域；生产环境建议设置为前端域名白名单。预检允许 `GET,POST,PUT,PATCH,DELETE,OPTIONS`
 
 阿里云 RAM 权限建议至少包含：
 
@@ -79,6 +80,8 @@ go build -o bin/cloudlens-server ./cmd
 - `data/control/control.db`
 - `data/kb/knowledge.db`
 
+云账号密钥本机加密使用 `data/cloud/secret.key`，后端会把历史权限自动收紧到 `0600`。ECS/RDS 列表成功同步后，会在 `cloud_resource_snapshots` 表保存最近一次资源快照；云厂商 API 临时失败时，列表接口会返回 `degraded: true` 的旧快照，避免前端资源页直接断流。
+
 当前不建议单独起数据库容器。先用 SQLite，等以后真有多实例或协同写入需求，再迁 PostgreSQL。
 
 ## 常用接口
@@ -94,11 +97,22 @@ go build -o bin/cloudlens-server ./cmd
 - `GET /api/cloud/huawei/rds/instances`：返回华为云 RDS 实例基础信息、节点 ID、规格、存储、连接端点、到期状态和官方空间用量；空间接口失败时会保留基础实例并在 `detailErrors` 标注局部错误
 - `GET /api/cloud/huawei/rds/overview`：从 CES `SYS.RDS` 查询 CPU、内存、QPS、连接数和 IOPS；单个指标失败不会影响其它指标返回
 - `GET /api/cloud/huawei/metrics`：返回单个 CES 指标序列，可通过 `namespace` 和 `metric` 指定指标
+- `GET /api/cloud/snapshots`：返回账号维度的 ECS/RDS 最近快照摘要
+- `GET /api/cloud/diagnostics`：返回云账号启用状态、最近测试结果、期望权限和快照覆盖
+- `GET /api/cloud/risks`：基于快照识别到期、公网暴露、RDS 存储水位、资源状态异常和快照陈旧
+- `GET /api/cloud/inspection-report`：返回轻量巡检报告，支持 `?format=markdown`
+- `GET /api/runtime/checks`：返回本地数据目录、密钥权限、CORS、Dashboard 降级和告警闭环检查
 
 ## 验证
 
 ```bash
 go test ./... -count=1
+```
+
+K8s 清单一致性检查：
+
+```bash
+scripts/ops/k8s-manifest-check.sh --k8s-dir ../deploy/k8s
 ```
 
 主线接口轻量回归：

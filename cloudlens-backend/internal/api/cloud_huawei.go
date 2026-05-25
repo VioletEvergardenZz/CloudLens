@@ -79,20 +79,22 @@ func (h *handler) cloudHuaweiInstances(w http.ResponseWriter, r *http.Request) {
 	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
 	items, err := client.ListInstances(regions)
 	if err != nil {
+		if h.writeCloudSnapshotFallback(w, account, huaweicloud.ProviderName, "ecs", err, humanizeHuaweiCloudError, classifyHuaweiCloudError) {
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": humanizeHuaweiCloudError(err),
 			"code":  classifyHuaweiCloudError(err),
 		})
 		return
 	}
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID
-	}
+	h.saveCloudResourceSnapshot(account, "ecs", items)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"accountId": accountID,
+		"accountId": cloudAccountID(account),
 		"ok":        true,
 		"provider":  huaweicloud.ProviderName,
+		"resource":  "ecs",
+		"source":    "live",
 		"items":     items,
 		"total":     len(items),
 	})
@@ -113,21 +115,22 @@ func (h *handler) cloudHuaweiRDSInstances(w http.ResponseWriter, r *http.Request
 	regions := splitCloudList(firstCloudQuery(r, "regions", "region"))
 	items, err := client.ListRDSInstances(regions)
 	if err != nil {
+		if h.writeCloudSnapshotFallback(w, account, huaweicloud.ProviderName, "rds", err, humanizeHuaweiCloudError, classifyHuaweiCloudError) {
+			return
+		}
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error": humanizeHuaweiCloudError(err),
 			"code":  classifyHuaweiCloudError(err),
 		})
 		return
 	}
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID
-	}
+	h.saveCloudResourceSnapshot(account, "rds", items)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"accountId": accountID,
+		"accountId": cloudAccountID(account),
 		"ok":        true,
 		"provider":  huaweicloud.ProviderName,
 		"resource":  "rds",
+		"source":    "live",
 		"items":     items,
 		"total":     len(items),
 	})

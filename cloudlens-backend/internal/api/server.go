@@ -147,6 +147,10 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/registry/domain-probe", h.registryDomainProbe)
 	mux.HandleFunc("/api/cloud/accounts", h.cloudAccountsHandler)
 	mux.HandleFunc("/api/cloud/accounts/", h.cloudAccountByIDHandler)
+	mux.HandleFunc("/api/cloud/snapshots", h.cloudSnapshots)
+	mux.HandleFunc("/api/cloud/diagnostics", h.cloudDiagnostics)
+	mux.HandleFunc("/api/cloud/risks", h.cloudRisks)
+	mux.HandleFunc("/api/cloud/inspection-report", h.cloudInspectionReport)
 	mux.HandleFunc("/api/cloud/aliyun/instances", h.cloudAliyunInstances)
 	mux.HandleFunc("/api/cloud/aliyun/rds/instances", h.cloudAliyunRDSInstances)
 	mux.HandleFunc("/api/cloud/aliyun/rds/overview", h.cloudAliyunRDSOverview)
@@ -157,6 +161,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/cloud/huawei/rds/overview", h.cloudHuaweiRDSOverview)
 	mux.HandleFunc("/api/cloud/huawei/metrics", h.cloudHuaweiMetrics)
 	mux.HandleFunc("/api/cloud/huawei/overview", h.cloudHuaweiOverview)
+	mux.HandleFunc("/api/runtime/checks", h.runtimeChecks)
 	mux.HandleFunc("/api/health", h.health)
 	mux.HandleFunc("/metrics", h.prometheusMetrics)
 
@@ -911,7 +916,7 @@ func withCORS(cfg *models.Config, next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			if !originAllowed {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})

@@ -24,7 +24,7 @@ jobs:
           cache-dependency-path: cloudlens-backend/go.sum
 
       - name: go test
-        run: go test ./...
+        run: go test ./... -count=1
 
       - name: queue-admin check smoke
         run: |
@@ -84,6 +84,21 @@ jobs:
           fi
           echo "$strict_json" | grep -q '"status":"degraded"'
 
+  k8s-manifest-check:
+    name: k8s manifest check
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.34.1"
+
+      - name: k8s manifest check
+        run: cloudlens-backend/scripts/ops/k8s-manifest-check.sh --k8s-dir deploy/k8s
+
   frontend-build:
     name: frontend build
     runs-on: ubuntu-latest
@@ -103,6 +118,9 @@ jobs:
 
       - name: npm ci
         run: npm ci
+
+      - name: npm run lint
+        run: npm run lint
 
       - name: npm run build
         run: npm run build

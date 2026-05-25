@@ -7,12 +7,14 @@ services:
     build:
       context: ./cloudlens-backend
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
-      - /opt/cloudlens/config:/etc/cloudlens
-      - /opt/cloudlens/logs:/app/logs
-      - /opt/cloudlens/data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cloudlens-config:/etc/cloudlens
+      - cloudlens-logs:/app/logs
+      - cloudlens-data:/app/data
+      # 如需启用 Docker 容器日志告警，再按需挂载 Docker socket。
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "${CLOUDLENS_BACKEND_PORT:-8082}:8080"
     restart: unless-stopped
@@ -35,3 +37,8 @@ services:
 networks:
   cloudlens-net:
     driver: bridge
+
+volumes:
+  cloudlens-config:
+  cloudlens-logs:
+  cloudlens-data:

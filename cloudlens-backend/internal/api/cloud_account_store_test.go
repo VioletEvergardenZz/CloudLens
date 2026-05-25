@@ -4,8 +4,13 @@
 package api
 
 import (
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCloudAccountStoreSupportsHuaweiProvider(t *testing.T) {
@@ -142,4 +147,168 @@ func TestCloudAccountStoreUpdateCanClearHuaweiProjectID(t *testing.T) {
 	if cfg.ProjectID != "" {
 		t.Fatalf("清空后配置中的 ProjectID 应为空，实际: %s", cfg.ProjectID)
 	}
+}
+
+func TestLoadOrCreateCloudSecretKeyTightensExistingFilePerm(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "secret.key")
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key)), 0o644); err != nil {
+		t.Fatalf("写入测试密钥失败: %v", err)
+	}
+
+	loaded, err := loadOrCreateCloudSecretKey(keyPath)
+	if err != nil {
+		t.Fatalf("读取测试密钥失败: %v", err)
+	}
+	if hex.EncodeToString(loaded) != hex.EncodeToString(key) {
+		t.Fatalf("读取到的密钥不符合预期")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("读取测试密钥权限失败: %v", err)
+	}
+	if info.Mode().Perm() != cloudSecretKeyPerm {
+		t.Fatalf("历史密钥文件权限应收紧为 %o，实际 %o", cloudSecretKeyPerm, info.Mode().Perm())
+	}
+}
+
+func TestCloudAccountStoreResourceSnapshotLifecycle(t *testing.T) {
+	store, err := newCloudAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("初始化云账号存储失败: %v", err)
+	}
+	defer store.Close()
+
+	account, err := store.Create(cloudAccountUpsert{
+		Provider:        "aliyun",
+		Name:            "阿里云测试账号",
+		AccessKeyID:     "aliyun-ak",
+		AccessKeySecret: "aliyun-secret",
+		MetricPeriod:    "60",
+	})
+	if err != nil {
+		t.Fatalf("创建阿里云账号失败: %v", err)
+	}
+
+	items := []map[string]any{
+		{"id": "i-001", "name": "web-1", "status": "Running"},
+		{"id": "i-002", "name": "web-2", "status": "Stopped"},
+	}
+	if err := store.SaveResourceSnapshot(account.ID, account.Provider, "ecs", items, "live"); err != nil {
+		t.Fatalf("保存资源快照失败: %v", err)
+	}
+	snapshot, err := store.GetResourceSnapshot(account.ID, "instances")
+	if err != nil {
+		t.Fatalf("读取资源快照失败: %v", err)
+	}
+	if snapshot.Total != len(items) {
+		t.Fatalf("资源快照数量期望 %d，实际 %d", len(items), snapshot.Total)
+	}
+	var saved []map[string]any
+	if err := json.Unmarshal(snapshot.PayloadJSON, &saved); err != nil {
+		t.Fatalf("快照 JSON 无法解析: %v", err)
+	}
+	if len(saved) != len(items) {
+		t.Fatalf("快照 JSON 数量期望 %d，实际 %d", len(items), len(saved))
+	}
+
+	if err := store.RecordResourceSnapshotError(account.ID, "ecs", "云 API 临时失败"); err != nil {
+		t.Fatalf("记录资源快照错误失败: %v", err)
+	}
+	snapshot, err = store.GetResourceSnapshot(account.ID, "ecs")
+	if err != nil {
+		t.Fatalf("重新读取资源快照失败: %v", err)
+	}
+	if snapshot.LastError != "云 API 临时失败" {
+		t.Fatalf("LastError 未按预期保存，实际: %s", snapshot.LastError)
+	}
+
+	if err := store.Delete(account.ID); err != nil {
+		t.Fatalf("删除账号失败: %v", err)
+	}
+	if _, err := store.GetResourceSnapshot(account.ID, "ecs"); err == nil {
+		t.Fatal("删除账号后不应继续读取到资源快照")
+	}
+}
+
+func TestBuildCloudRisksFromSnapshots(t *testing.T) {
+	store, err := newCloudAccountStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("初始化云账号存储失败: %v", err)
+	}
+	defer store.Close()
+
+	account, err := store.Create(cloudAccountUpsert{
+		Provider:        "aliyun",
+		Name:            "阿里云测试账号",
+		AccessKeyID:     "aliyun-ak",
+		AccessKeySecret: "aliyun-secret",
+		MetricPeriod:    "60",
+	})
+	if err != nil {
+		t.Fatalf("创建阿里云账号失败: %v", err)
+	}
+
+	storageUsage := 91.5
+	ecsExpiresInDays := 3
+	if err := store.SaveResourceSnapshot(account.ID, account.Provider, "ecs", []cloudSnapshotResource{{
+		ID:                "i-public",
+		Name:              "公网 ECS",
+		Provider:          "aliyun",
+		RegionID:          "cn-hangzhou",
+		Status:            "Running",
+		PublicIPs:         []string{"203.0.113.10"},
+		ExpiresInDays:     &ecsExpiresInDays,
+		ExpirationStatus:  "expiring",
+		ExpirationMessage: "3 天后到期",
+	}}, "live"); err != nil {
+		t.Fatalf("保存 ECS 快照失败: %v", err)
+	}
+	if err := store.SaveResourceSnapshot(account.ID, account.Provider, "rds", []cloudSnapshotResource{{
+		ID:               "rm-critical",
+		Name:             "高水位 RDS",
+		Provider:         "aliyun",
+		RegionID:         "cn-hangzhou",
+		Status:           "Running",
+		ResourceUsage:    &cloudSnapshotUsage{StorageUsagePercent: &storageUsage},
+		ConnectionString: "rm-public.mysql.rds.aliyuncs.com",
+	}}, "live"); err != nil {
+		t.Fatalf("保存 RDS 快照失败: %v", err)
+	}
+
+	handler := &handler{cloudStore: store}
+	risks, summary, err := handler.buildCloudRisks()
+	if err != nil {
+		t.Fatalf("构建风险失败: %v", err)
+	}
+	if summary.Critical == 0 {
+		t.Fatalf("期望至少识别一个 critical 风险，实际摘要: %#v", summary)
+	}
+	if !hasRiskCategory(risks, "expiration") || !hasRiskCategory(risks, "public_exposure") || !hasRiskCategory(risks, "rds_storage") {
+		t.Fatalf("风险分类缺失，实际: %#v", risks)
+	}
+
+	old := time.Now().UTC().Add(-7 * time.Hour)
+	if _, err := store.db.Exec(`UPDATE cloud_resource_snapshots SET last_success_at = ?`, formatCloudTime(old)); err != nil {
+		t.Fatalf("构造陈旧快照失败: %v", err)
+	}
+	risks, _, err = handler.buildCloudRisks()
+	if err != nil {
+		t.Fatalf("构建陈旧快照风险失败: %v", err)
+	}
+	if !hasRiskCategory(risks, "snapshot_stale") {
+		t.Fatalf("期望识别快照陈旧风险，实际: %#v", risks)
+	}
+}
+
+func hasRiskCategory(items []cloudRiskItem, category string) bool {
+	for _, item := range items {
+		if item.Category == category {
+			return true
+		}
+	}
+	return false
 }

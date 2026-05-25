@@ -19,6 +19,7 @@ type PageKey =
   | "alerts"
   | "ai"
   | "knowledge"
+  | "ops"
   | "sync"
   | "settings";
 
@@ -313,6 +314,98 @@ type CloudAccountForm = {
   accessKeyId: string;
   accessKeySecret: string;
   metricPeriod: string;
+};
+
+type CloudOpsCheck = {
+  name: string;
+  status: string;
+  severity?: string;
+  message: string;
+  suggestion?: string;
+};
+
+type CloudSnapshotSummary = {
+  accountId: number;
+  provider: string;
+  resourceType: string;
+  total: number;
+  source: string;
+  lastSuccessAt: string;
+  lastError?: string;
+  ageSeconds: number;
+  status: string;
+};
+
+type CloudAccountDiagnostic = {
+  account: ApiCloudAccount;
+  status: string;
+  expectedPermissions: string[];
+  checks: CloudOpsCheck[];
+  snapshots: CloudSnapshotSummary[];
+};
+
+type CloudRiskItem = {
+  id: string;
+  severity: string;
+  category: string;
+  provider: string;
+  accountId: number;
+  accountName: string;
+  resourceType: string;
+  resourceId: string;
+  resourceName: string;
+  region: string;
+  message: string;
+  suggestion: string;
+  evidence?: string;
+  detectedAt: string;
+};
+
+type CloudRiskSummary = {
+  total: number;
+  critical: number;
+  warning: number;
+  info: number;
+  byAccount?: Record<string, number>;
+  byCategory?: Record<string, number>;
+};
+
+type CloudInspectionReport = {
+  generatedAt: string;
+  status: string;
+  summary: Record<string, number>;
+  diagnostics: CloudAccountDiagnostic[];
+  risks: CloudRiskItem[];
+  runtime: CloudOpsCheck[];
+  nextActions: string[];
+};
+
+type CloudDiagnosticsResponse = {
+  ok?: boolean;
+  diagnostics?: CloudAccountDiagnostic[];
+  snapshots?: CloudSnapshotSummary[];
+  error?: string;
+};
+
+type CloudRisksResponse = {
+  ok?: boolean;
+  items?: CloudRiskItem[];
+  summary?: CloudRiskSummary;
+  error?: string;
+};
+
+type RuntimeChecksResponse = {
+  ok?: boolean;
+  status?: string;
+  checks?: CloudOpsCheck[];
+  checkedAt?: string;
+  error?: string;
+};
+
+type CloudInspectionReportResponse = {
+  ok?: boolean;
+  report?: CloudInspectionReport;
+  error?: string;
 };
 
 type MonitorMetricKey = string;
@@ -693,6 +786,12 @@ const menuGroups: Array<{
   {
     title: "接入治理",
     items: [
+      { key: "ops", label: "运维体检", desc: "诊断、风险与巡检", children: [
+        { key: "overview", label: "体检总览", desc: "运行和风险摘要" },
+        { key: "diagnostics", label: "账号诊断", desc: "权限和快照覆盖" },
+        { key: "risks", label: "风险中心", desc: "资源风险项" },
+        { key: "report", label: "巡检报告", desc: "下一步动作" },
+      ] },
       { key: "sync", label: "同步健康", desc: "账号与资源同步", children: [
         { key: "scope", label: "同步说明", desc: "定位和重点" },
         { key: "tasks", label: "任务列表", desc: "同步进度" },
@@ -1041,7 +1140,7 @@ const syncTasks: SyncTask[] = [
   {
     id: "sync-huawei-prod",
     accountId: "huawei-prod",
-    name: "同步华为云 ECS 与 VPC 信息",
+    name: "同步华为云 ECS/RDS 与 VPC 信息",
     status: "完成",
     progress: "100%",
     updatedAt: "13:15:33",
@@ -2234,6 +2333,204 @@ const formatDisplayTime = (raw?: string) => {
   return date.toLocaleString("zh-CN", { hour12: false });
 };
 
+const formatDurationSeconds = (seconds?: number) => {
+  if (typeof seconds !== "number" || seconds < 0) return "--";
+  if (seconds < 60) return `${Math.round(seconds)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天`;
+};
+
+const cloudOpsStatusLabels: Record<string, string> = {
+  ok: "正常",
+  warning: "需关注",
+  error: "异常",
+  fresh: "新鲜",
+  aging: "可用",
+  stale: "陈旧",
+  degraded: "降级",
+  unknown: "未知",
+};
+
+const cloudRiskSeverityLabels: Record<string, string> = {
+  critical: "严重",
+  warning: "预警",
+  info: "提示",
+};
+
+const cloudRiskCategoryLabels: Record<string, string> = {
+  expiration: "到期风险",
+  public_exposure: "公网暴露",
+  rds_storage: "RDS 存储",
+  resource_status: "资源状态",
+  snapshot_stale: "快照陈旧",
+  snapshot_decode: "快照解析",
+  detail_partial_failure: "详情缺失",
+};
+
+const emptyCloudRiskSummary = (): CloudRiskSummary => ({
+  total: 0,
+  critical: 0,
+  warning: 0,
+  info: 0,
+  byAccount: {},
+  byCategory: {},
+});
+
+const providerLabel = (provider?: string) => {
+  if (provider === "aliyun" || provider === "huawei" || provider === "tencent") return providerLabels[provider];
+  return provider || "--";
+};
+
+const resourceTypeLabel = (resourceType?: string) => {
+  if (resourceType === "ecs" || resourceType === "rds") return resourceTypeLabels[resourceType];
+  return (resourceType || "--").toUpperCase();
+};
+
+const cloudOpsStatusLabel = (status?: string) => cloudOpsStatusLabels[status || ""] ?? status ?? "--";
+const cloudRiskSeverityLabel = (severity?: string) => cloudRiskSeverityLabels[severity || ""] ?? severity ?? "--";
+const cloudRiskCategoryLabel = (category?: string) => cloudRiskCategoryLabels[category || ""] ?? category ?? "--";
+
+const summarizeCloudRiskItems = (items: CloudRiskItem[]): CloudRiskSummary => {
+  const summary = emptyCloudRiskSummary();
+  items.forEach((item) => {
+    summary.total += 1;
+    if (item.severity === "critical") summary.critical += 1;
+    else if (item.severity === "warning") summary.warning += 1;
+    else summary.info += 1;
+    const accountKey = item.accountName || String(item.accountId);
+    summary.byAccount = { ...(summary.byAccount ?? {}), [accountKey]: (summary.byAccount?.[accountKey] ?? 0) + 1 };
+    summary.byCategory = { ...(summary.byCategory ?? {}), [item.category]: (summary.byCategory?.[item.category] ?? 0) + 1 };
+  });
+  return summary;
+};
+
+const mockAccountIDMap = (accounts: CloudAccount[]) =>
+  new Map(accounts.map((account, index) => [account.id, index + 1]));
+
+const mapCloudAccountToApi = (account: CloudAccount, accountId: number): ApiCloudAccount => ({
+  id: accountId,
+  provider: account.provider,
+  name: account.name,
+  accessKeyIdMasked: account.uid,
+  regions: account.regions,
+  metricPeriod: account.metricPeriod ?? "60",
+  enabled: account.enabled !== false,
+  lastCheckStatus: account.status === "normal" ? "ok" : account.status === "disabled" ? "" : "warning",
+  lastCheckMessage: account.checkMessage || "",
+  lastCheckedAt: new Date().toISOString(),
+});
+
+const buildMockOpsHealth = (
+  accounts: CloudAccount[],
+  servers: CloudServer[],
+  reminders: CloudAlertReminder[]
+): {
+  diagnostics: CloudAccountDiagnostic[];
+  snapshots: CloudSnapshotSummary[];
+  risks: CloudRiskItem[];
+  riskSummary: CloudRiskSummary;
+  runtimeChecks: CloudOpsCheck[];
+  report: CloudInspectionReport;
+  checkedAt: string;
+} => {
+  const accountIDs = mockAccountIDMap(accounts);
+  const checkedAt = new Date().toISOString();
+  const snapshots = accounts.flatMap((account) => {
+    const accountId = accountIDs.get(account.id) ?? 0;
+    return resourceTypes.map((resourceType) => {
+      const total = servers.filter((server) => server.accountId === account.id && getResourceType(server) === resourceType).length;
+      return {
+        accountId,
+        provider: account.provider,
+        resourceType,
+        total,
+        source: "mock",
+        lastSuccessAt: checkedAt,
+        ageSeconds: 90,
+        status: total > 0 ? "fresh" : "unknown",
+      };
+    });
+  });
+  const diagnostics = accounts.map((account) => {
+    const accountId = accountIDs.get(account.id) ?? 0;
+    const accountSnapshots = snapshots.filter((snapshot) => snapshot.accountId === accountId);
+    const enabled = account.enabled !== false;
+    const checks: CloudOpsCheck[] = [
+      {
+        name: "账号启用状态",
+        status: enabled ? "ok" : "warning",
+        severity: enabled ? "info" : "warning",
+        message: enabled ? "云账号已启用" : "云账号已停用",
+      },
+      {
+        name: "资源快照覆盖",
+        status: accountSnapshots.some((snapshot) => snapshot.total > 0) ? "ok" : "warning",
+        severity: "info",
+        message: `示例快照覆盖 ${accountSnapshots.reduce((total, snapshot) => total + snapshot.total, 0)} 个资源`,
+      },
+    ];
+    return {
+      account: mapCloudAccountToApi(account, accountId),
+      status: checks.some((check) => check.status === "warning") ? "warning" : "ok",
+      expectedPermissions: account.provider === "huawei"
+        ? ["ECS 只读", "RDS 只读", "CES 监控只读"]
+        : ["AliyunECSReadOnlyAccess", "AliyunRDSReadOnlyAccess", "AliyunCloudMonitorReadOnlyAccess"],
+      checks,
+      snapshots: accountSnapshots,
+    };
+  });
+  const risks: CloudRiskItem[] = reminders.map((reminder) => ({
+    id: `mock:${reminder.id}`,
+    severity: reminder.severity,
+    category: reminder.ruleId.includes("expiration")
+      ? "expiration"
+      : reminder.ruleId.includes("disk")
+        ? "rds_storage"
+        : reminder.ruleId.includes("status")
+          ? "resource_status"
+          : "detail_partial_failure",
+    provider: reminder.provider,
+    accountId: accountIDs.get(reminder.accountId) ?? 0,
+    accountName: accounts.find((account) => account.id === reminder.accountId)?.name ?? reminder.accountId,
+    resourceType: reminder.resourceType,
+    resourceId: reminder.instanceId,
+    resourceName: reminder.resourceName,
+    region: reminder.region,
+    message: reminder.message,
+    suggestion: reminder.suggestion,
+    evidence: reminder.currentValue,
+    detectedAt: checkedAt,
+  }));
+  const riskSummary = summarizeCloudRiskItems(risks);
+  const runtimeChecks: CloudOpsCheck[] = [
+    { name: "云账号存储", status: "ok", severity: "info", message: "示例模式使用内置数据" },
+    { name: "Dashboard 降级", status: "ok", severity: "info", message: "/api/dashboard 支持降级数据合同" },
+    { name: "告警处置闭环", status: "ok", severity: "info", message: "告警事件支持 open -> processing -> recovered" },
+  ];
+  const report: CloudInspectionReport = {
+    generatedAt: checkedAt,
+    status: riskSummary.critical > 0 ? "error" : riskSummary.warning > 0 ? "warning" : "ok",
+    summary: {
+      accounts: diagnostics.length,
+      risks: risks.length,
+      criticalRisk: riskSummary.critical,
+      warningRisk: riskSummary.warning,
+      runtimeChecks: runtimeChecks.length,
+    },
+    diagnostics,
+    risks,
+    runtime: runtimeChecks,
+    nextActions: risks.length
+      ? ["先处理严重风险资源", "把确认后的处置过程写入告警闭环记录", "刷新资源同步后复查体检结果"]
+      : ["保持云账号测试和资源同步节奏"],
+  };
+  return { diagnostics, snapshots, risks, riskSummary, runtimeChecks, report, checkedAt };
+};
+
 const alertSeverityLabels: Record<CloudAlertSeverity, string> = {
   info: "提示",
   warning: "预警",
@@ -2585,10 +2882,10 @@ const buildCloudAlertReminders = (servers: CloudServer[], configs: Record<string
 };
 
 const getStatusClass = (status: string) => {
-  if (status === "running" || status === "online" || status === "normal" || status === "info" || status === "完成") {
+  if (status === "running" || status === "online" || status === "normal" || status === "info" || status === "ok" || status === "fresh" || status === "aging" || status === "完成") {
     return "ok";
   }
-  if (status === "warning" || status === "stale" || status === "syncing" || status === "expiring" || status === "执行中" || status === "等待") {
+  if (status === "warning" || status === "stale" || status === "degraded" || status === "syncing" || status === "expiring" || status === "执行中" || status === "等待") {
     return "warn";
   }
   if (status === "maintenance" || status === "disabled" || status === "no_expiration" || status === "unknown") {
@@ -2606,6 +2903,7 @@ const defaultPageSections: Partial<Record<PageKey, string>> = {
   alerts: "reminders",
   ai: "analysis",
   knowledge: "entries",
+  ops: "overview",
   sync: "tasks",
   settings: "config",
 };
@@ -2728,6 +3026,15 @@ export function CloudResourceConsole() {
   const [alertRuleConfigs, setAlertRuleConfigs] = useState<Record<string, CloudAlertRuleConfig>>(() => buildInitialAlertRuleConfigs());
   const [selectedAlertRuleId, setSelectedAlertRuleId] = useState(cloudAlertRules[0]?.id ?? "");
   const [alertFilter, setAlertFilter] = useState<AlertWorkbenchFilter>({});
+  const [opsLoading, setOpsLoading] = useState(!USE_MOCK);
+  const [opsError, setOpsError] = useState("");
+  const [opsDiagnostics, setOpsDiagnostics] = useState<CloudAccountDiagnostic[]>([]);
+  const [opsSnapshots, setOpsSnapshots] = useState<CloudSnapshotSummary[]>([]);
+  const [opsRisks, setOpsRisks] = useState<CloudRiskItem[]>([]);
+  const [opsRiskSummary, setOpsRiskSummary] = useState<CloudRiskSummary>(() => emptyCloudRiskSummary());
+  const [opsRuntimeChecks, setOpsRuntimeChecks] = useState<CloudOpsCheck[]>([]);
+  const [opsReport, setOpsReport] = useState<CloudInspectionReport | null>(null);
+  const [opsCheckedAt, setOpsCheckedAt] = useState("--");
   const assetLoadingRef = useRef(false);
 
   const getActiveSection = useCallback((page: PageKey) => {
@@ -2753,7 +3060,7 @@ export function CloudResourceConsole() {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
-  const refreshCloudResourceOverviews = async (tasks: CloudOverviewRefreshTask[], baseIssues: CloudAssetIssue[]) => {
+  const refreshCloudResourceOverviews = useCallback(async (tasks: CloudOverviewRefreshTask[], baseIssues: CloudAssetIssue[]) => {
     if (!tasks.length) return;
     const results = await Promise.allSettled(tasks.map((task) => task()));
     const overviewMap: Record<string, AliyunOverviewResponse> = {};
@@ -2779,9 +3086,9 @@ export function CloudResourceConsole() {
     setAssetIssues(nextIssues);
     setAssetError(summarizeCloudAssetIssues(nextIssues));
     setRefreshState(nextIssues.length === 0 ? "ok" : "error");
-  };
+  }, []);
 
-  const loadCloudAssets = async (options: { silent?: boolean } = {}) => {
+  const loadCloudAssets = useCallback(async (options: { silent?: boolean } = {}) => {
     if (assetLoadingRef.current) return false;
     assetLoadingRef.current = true;
     setRefreshState("syncing");
@@ -2987,7 +3294,7 @@ export function CloudResourceConsole() {
       assetLoadingRef.current = false;
       if (!options.silent) setAssetLoading(false);
     }
-  };
+  }, [refreshCloudResourceOverviews]);
 
   const refreshAccountsAndResources = async () => {
     setAccountNotice("正在刷新账号列表、ECS/RDS 实例和监控概览");
@@ -3181,7 +3488,7 @@ export function CloudResourceConsole() {
       void loadCloudAssets({ silent: true });
     }, ASSET_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [loadCloudAssets]);
 
   const parsedScope = useMemo(() => parseScope(scope), [scope]);
 
@@ -3293,6 +3600,58 @@ export function CloudResourceConsole() {
     const affectedResources = new Set(cloudAlertReminders.map((item) => item.serverId)).size;
     return { critical, warning, info, affectedResources };
   }, [cloudAlertReminders]);
+
+  const loadOpsHealth = useCallback(async () => {
+    setOpsLoading(true);
+    setOpsError("");
+    if (USE_MOCK) {
+      const mock = buildMockOpsHealth(accounts, servers, cloudAlertReminders);
+      setOpsDiagnostics(mock.diagnostics);
+      setOpsSnapshots(mock.snapshots);
+      setOpsRisks(mock.risks);
+      setOpsRiskSummary(mock.riskSummary);
+      setOpsRuntimeChecks(mock.runtimeChecks);
+      setOpsReport(mock.report);
+      setOpsCheckedAt(formatDisplayTime(mock.checkedAt));
+      setOpsLoading(false);
+      return;
+    }
+    try {
+      const [diagnosticsResp, risksResp, runtimeResp, reportResp] = await Promise.all([
+        fetchWithTimeout(`${API_BASE}/api/cloud/diagnostics`, { cache: "no-store", headers: buildApiHeaders() }),
+        fetchWithTimeout(`${API_BASE}/api/cloud/risks`, { cache: "no-store", headers: buildApiHeaders() }),
+        fetchWithTimeout(`${API_BASE}/api/runtime/checks`, { cache: "no-store", headers: buildApiHeaders() }),
+        fetchWithTimeout(`${API_BASE}/api/cloud/inspection-report`, { cache: "no-store", headers: buildApiHeaders() }),
+      ]);
+      const diagnosticsPayload = (await diagnosticsResp.json().catch(() => ({}))) as CloudDiagnosticsResponse;
+      const risksPayload = (await risksResp.json().catch(() => ({}))) as CloudRisksResponse;
+      const runtimePayload = (await runtimeResp.json().catch(() => ({}))) as RuntimeChecksResponse;
+      const reportPayload = (await reportResp.json().catch(() => ({}))) as CloudInspectionReportResponse;
+      if (!diagnosticsResp.ok) throw new Error(diagnosticsPayload.error || `账号诊断接口返回 ${diagnosticsResp.status}`);
+      if (!risksResp.ok) throw new Error(risksPayload.error || `风险中心接口返回 ${risksResp.status}`);
+      if (!runtimeResp.ok) throw new Error(runtimePayload.error || `运行体检接口返回 ${runtimeResp.status}`);
+      if (!reportResp.ok) throw new Error(reportPayload.error || `巡检报告接口返回 ${reportResp.status}`);
+
+      const riskItems = risksPayload.items ?? [];
+      setOpsDiagnostics(diagnosticsPayload.diagnostics ?? []);
+      setOpsSnapshots(diagnosticsPayload.snapshots ?? []);
+      setOpsRisks(riskItems);
+      setOpsRiskSummary(risksPayload.summary ?? summarizeCloudRiskItems(riskItems));
+      setOpsRuntimeChecks(runtimePayload.checks ?? []);
+      setOpsReport(reportPayload.report ?? null);
+      setOpsCheckedAt(formatDisplayTime(runtimePayload.checkedAt || reportPayload.report?.generatedAt));
+      const payloadErrors = [diagnosticsPayload.error, risksPayload.error, runtimePayload.error, reportPayload.error].filter(Boolean);
+      setOpsError(payloadErrors.join("；"));
+    } catch (error) {
+      setOpsError(error instanceof Error ? error.message : "运维体检数据加载失败");
+    } finally {
+      setOpsLoading(false);
+    }
+  }, [accounts, cloudAlertReminders, servers]);
+
+  useEffect(() => {
+    void loadOpsHealth();
+  }, [loadOpsHealth]);
 
   const alertRuleRows = useMemo(() => {
     const counts = new Map<string, number>();
@@ -4232,7 +4591,7 @@ export function CloudResourceConsole() {
               })}
               {!accounts.length ? (
                 <tr>
-                  <td className="empty-cell" colSpan={10}>还没有云账号，先在下方新增一个阿里云 ECS/RDS 或华为云 ECS 账号</td>
+                  <td className="empty-cell" colSpan={10}>还没有云账号，先在下方新增一个阿里云 ECS/RDS 或华为云 ECS/RDS 账号</td>
                 </tr>
               ) : null}
             </tbody>
@@ -4930,6 +5289,202 @@ export function CloudResourceConsole() {
     );
   };
 
+  const renderOpsPage = () => {
+    const activeSection = getActiveSection("ops");
+    const report = opsReport;
+    const runtimeStatus = report?.status ?? (opsRuntimeChecks.some((item) => item.status === "error") ? "error" : opsRuntimeChecks.some((item) => item.status === "warning") ? "warning" : "ok");
+    return (
+    <section className="page-main-section ops-page">
+      <div className="ops-topline">
+        <div className="simple-summary">
+          <span><b>总体状态</b>{cloudOpsStatusLabel(runtimeStatus)}</span>
+          <span><b>账号诊断</b>{opsDiagnostics.length}</span>
+          <span><b>资源快照</b>{opsSnapshots.length}</span>
+          <span><b>风险项</b>{opsRiskSummary.total}</span>
+          <span><b>严重</b>{opsRiskSummary.critical}</span>
+          <span><b>最近体检</b>{opsLoading ? "加载中" : opsCheckedAt}</span>
+        </div>
+        <div className="monitor-refresh-panel">
+          <span>{opsError || (opsLoading ? "正在加载体检数据" : "诊断、风险、巡检和运行检查已汇总")}</span>
+          <button type="button" onClick={() => void loadOpsHealth()} disabled={opsLoading}>
+            {opsLoading ? "体检中" : "重新体检"}
+          </button>
+        </div>
+      </div>
+
+      {activeSection === "overview" ? (
+      <div className="ops-overview-grid">
+        <section className="detail-panel">
+          <div className="section-title">
+            <h3>运行检查</h3>
+            <span>部署、数据目录、CORS、Dashboard 降级和告警闭环</span>
+          </div>
+          <div className="ops-check-list">
+            {opsRuntimeChecks.map((check) => (
+              <article className="ops-check-row" key={`${check.name}:${check.message}`}>
+                <StatusText status={check.status}>{cloudOpsStatusLabel(check.status)}</StatusText>
+                <div>
+                  <strong>{check.name}</strong>
+                  <span>{check.message}</span>
+                  {check.suggestion ? <em>{check.suggestion}</em> : null}
+                </div>
+              </article>
+            ))}
+            {!opsRuntimeChecks.length ? <div className="resource-empty-hint">暂无运行检查数据</div> : null}
+          </div>
+        </section>
+        <section className="detail-panel">
+          <div className="section-title">
+            <h3>快照覆盖</h3>
+            <span>资源列表成功同步后会保留最近一次快照，用于云 API 抖动时降级展示</span>
+          </div>
+          <div className="ops-snapshot-grid">
+            {opsSnapshots.slice(0, 8).map((snapshot) => (
+              <article className="ops-snapshot-card" key={`${snapshot.accountId}:${snapshot.resourceType}`}>
+                <div>
+                  <strong>{providerLabel(snapshot.provider)} / {resourceTypeLabel(snapshot.resourceType)}</strong>
+                  <StatusText status={snapshot.status}>{cloudOpsStatusLabel(snapshot.status)}</StatusText>
+                </div>
+                <span>{snapshot.total} 条资源 / {formatDurationSeconds(snapshot.ageSeconds)}前</span>
+                {snapshot.lastError ? <em>{snapshot.lastError}</em> : null}
+              </article>
+            ))}
+            {!opsSnapshots.length ? <div className="resource-empty-hint">暂无资源快照，刷新资源总览后会自动生成</div> : null}
+          </div>
+        </section>
+      </div>
+      ) : null}
+
+      {activeSection === "diagnostics" ? (
+      <section className="detail-panel">
+        <div className="section-title">
+          <h3>账号诊断</h3>
+          <span>按账号检查启用状态、最近账号测试、期望权限和 ECS/RDS 快照覆盖</span>
+        </div>
+        <div className="table-panel">
+          <table className="data-table ops-diagnostics-table">
+            <thead>
+              <tr>
+                <th>账号</th>
+                <th>状态</th>
+                <th>期望权限</th>
+                <th>检查项</th>
+                <th>快照</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opsDiagnostics.map((item) => (
+                <tr key={item.account.id}>
+                  <td className="account-cell">
+                    <strong>{providerLabel(item.account.provider)}</strong>
+                    <span>{item.account.name}</span>
+                  </td>
+                  <td><StatusText status={item.status}>{cloudOpsStatusLabel(item.status)}</StatusText></td>
+                  <td>{item.expectedPermissions.join("、") || "--"}</td>
+                  <td>
+                    {item.checks.map((check) => (
+                      <span className="ops-inline-check" key={`${item.account.id}:${check.name}`}>
+                        <b>{check.name}</b>{check.message}
+                      </span>
+                    ))}
+                  </td>
+                  <td>
+                    {item.snapshots.map((snapshot) => (
+                      <span className="ops-inline-check" key={`${item.account.id}:${snapshot.resourceType}`}>
+                        <b>{resourceTypeLabel(snapshot.resourceType)}</b>{snapshot.total} 条 / {cloudOpsStatusLabel(snapshot.status)}
+                      </span>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+              {!opsDiagnostics.length ? (
+                <tr><td className="empty-cell" colSpan={5}>暂无账号诊断数据</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      ) : null}
+
+      {activeSection === "risks" ? (
+      <section className="detail-panel">
+        <div className="section-title">
+          <h3>风险中心</h3>
+          <span>基于资源快照识别到期、公网暴露、RDS 存储水位、状态异常和快照陈旧</span>
+        </div>
+        <div className="ops-risk-strip">
+          <span><b>{opsRiskSummary.critical}</b>严重</span>
+          <span><b>{opsRiskSummary.warning}</b>预警</span>
+          <span><b>{opsRiskSummary.info}</b>提示</span>
+          <span><b>{Object.keys(opsRiskSummary.byCategory ?? {}).length}</b>风险分类</span>
+        </div>
+        <div className="table-panel">
+          <table className="data-table ops-risk-table">
+            <thead>
+              <tr>
+                <th>级别</th>
+                <th>分类</th>
+                <th>资源</th>
+                <th>账号 / 地域</th>
+                <th>问题</th>
+                <th>建议</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opsRisks.map((risk) => (
+                <tr key={risk.id}>
+                  <td><StatusText status={risk.severity}>{cloudRiskSeverityLabel(risk.severity)}</StatusText></td>
+                  <td>{cloudRiskCategoryLabel(risk.category)}</td>
+                  <td className="server-name-cell">
+                    <strong>{risk.resourceName || risk.resourceId || "--"}</strong>
+                    <span>{resourceTypeLabel(risk.resourceType)} / {risk.resourceId || "--"}</span>
+                  </td>
+                  <td className="account-cell">
+                    <strong>{providerLabel(risk.provider)} / {risk.accountName || "--"}</strong>
+                    <span>{risk.region || "--"}</span>
+                  </td>
+                  <td>{risk.message}{risk.evidence ? <span>{risk.evidence}</span> : null}</td>
+                  <td>{risk.suggestion}</td>
+                </tr>
+              ))}
+              {!opsRisks.length ? (
+                <tr><td className="empty-cell" colSpan={6}>当前没有识别到快照风险</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      ) : null}
+
+      {activeSection === "report" ? (
+      <section className="detail-panel">
+        <div className="section-title">
+          <h3>轻量巡检报告</h3>
+          <span>{report ? `生成时间：${formatDisplayTime(report.generatedAt)}` : "暂无巡检报告"}</span>
+        </div>
+        <div className="ops-report-body">
+          <div className="ops-report-summary">
+            <span><b>{report?.summary.accounts ?? 0}</b>云账号</span>
+            <span><b>{report?.summary.risks ?? 0}</b>风险项</span>
+            <span><b>{report?.summary.criticalRisk ?? 0}</b>严重风险</span>
+            <span><b>{report?.summary.runtimeChecks ?? 0}</b>运行检查</span>
+          </div>
+          <div className="ops-next-actions">
+            {(report?.nextActions ?? []).map((action, index) => (
+              <article key={`${index}:${action}`}>
+                <strong>{index + 1}</strong>
+                <span>{action}</span>
+              </article>
+            ))}
+            {!report?.nextActions?.length ? <div className="resource-empty-hint">暂无下一步动作</div> : null}
+          </div>
+        </div>
+      </section>
+      ) : null}
+    </section>
+    );
+  };
+
   const renderSyncPage = () => {
     const activeSection = getActiveSection("sync");
     return (
@@ -5003,6 +5558,7 @@ export function CloudResourceConsole() {
     if (activePage === "alerts") return renderEventsPage();
     if (activePage === "ai") return renderAiPage();
     if (activePage === "knowledge") return renderKnowledgePage();
+    if (activePage === "ops") return renderOpsPage();
     if (activePage === "sync") return renderSyncPage();
     return renderSettingsPage();
   };
@@ -5077,7 +5633,7 @@ export function CloudResourceConsole() {
         <header className="admin-header">
           <div>
             <h1>{getPageSectionTitle(activePage, getActiveSection(activePage)) ? `${getPageTitle(activePage)} / ${getPageSectionTitle(activePage, getActiveSection(activePage))}` : getPageTitle(activePage)}</h1>
-            <p>当前先做好阿里云 ECS/RDS 与华为云 ECS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
+            <p>当前先做好阿里云 ECS/RDS 与华为云 ECS/RDS 监控，AI 分析和知识库保留为实例排查扩展能力。</p>
           </div>
           <div className="header-meta">
             <span>{USE_MOCK ? "当前为前端样例数据" : "当前为真实云账号数据"}</span>

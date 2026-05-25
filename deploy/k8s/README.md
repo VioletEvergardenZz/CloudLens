@@ -12,6 +12,14 @@ kubectl apply -f deploy/k8s/all-in-one.yaml
 kubectl apply -k deploy/k8s
 ```
 
+修改清单后先做离线一致性检查，确认单文件入口和拆分清单没有漂移：
+
+```bash
+cloudlens-backend/scripts/ops/k8s-manifest-check.sh --k8s-dir deploy/k8s
+```
+
+部署完成后建议把后端 Service 临时转发到本地，再访问 `/api/runtime/checks`、`/api/cloud/diagnostics`、`/api/cloud/risks` 和 `/api/cloud/inspection-report` 做一次运维体检确认。
+
 部署前需要先构建镜像：
 
 ```bash
@@ -26,7 +34,7 @@ kind load docker-image cloudlens-backend:local
 kind load docker-image cloudlens-frontend:local
 ```
 
-没有云账号也能启动。要接入真实云资源时，用 `cloud-credentials.example.yaml` 查看字段，再创建 `cloudlens-cloud-credentials` Secret，真实密钥不要提交到仓库。
+没有云账号也能启动。要接入真实云资源时，用 `cloud-credentials.example.yaml` 查看字段，再创建 `cloudlens-cloud-credentials` Secret，真实密钥不要提交到仓库。地域变量默认不配置，后端会按账号自动发现全部可见地域；只有临时排查或限定范围时再把 `ALIYUN_REGIONS`、`HUAWEI_REGIONS` 放进 Secret。
 
 当前清单已经包含探针、资源限制、PVC、Secret 引用、ServiceAccount 和 NetworkPolicy。后端保持单副本是因为当前默认使用 SQLite。
 

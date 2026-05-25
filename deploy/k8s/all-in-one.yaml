@@ -225,16 +225,8 @@ spec:
               value: /app/data/kb
             - name: ALERT_SOURCE_MIRROR_ROOT
               value: /app/logs/alert-sources
-            - name: ALIYUN_REGION
-              value: cn-hangzhou
-            - name: ALIYUN_REGIONS
-              value: cn-hangzhou
             - name: ALIYUN_METRIC_PERIOD
               value: "60"
-            - name: HUAWEI_REGION
-              value: cn-south-1
-            - name: HUAWEI_REGIONS
-              value: cn-south-1
             - name: HUAWEI_METRIC_PERIOD
               value: "60"
             - name: AI_BASE_URL

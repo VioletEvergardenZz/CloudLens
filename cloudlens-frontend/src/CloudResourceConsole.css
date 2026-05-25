@@ -2763,6 +2763,207 @@ select {
   min-width: 680px;
 }
 
+.ops-page {
+  align-content: start;
+}
+
+.ops-topline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
+  gap: 12px;
+}
+
+.ops-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.ops-check-list,
+.ops-snapshot-grid,
+.ops-report-body {
+  padding: 12px;
+}
+
+.ops-check-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ops-check-row {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.ops-check-row strong,
+.ops-check-row span,
+.ops-check-row em,
+.ops-snapshot-card strong,
+.ops-snapshot-card span,
+.ops-snapshot-card em,
+.ops-inline-check,
+.ops-next-actions span {
+  min-width: 0;
+  display: block;
+}
+
+.ops-check-row strong {
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.ops-check-row span:not(.status-text),
+.ops-check-row em,
+.ops-snapshot-card span,
+.ops-snapshot-card em,
+.ops-inline-check,
+.ops-next-actions span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ops-check-row em,
+.ops-snapshot-card em {
+  margin-top: 4px;
+  font-style: normal;
+}
+
+.ops-snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.ops-snapshot-card {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 11px 12px;
+}
+
+.ops-snapshot-card > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ops-snapshot-card strong {
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.ops-snapshot-card > span {
+  margin-top: 8px;
+}
+
+.ops-diagnostics-table {
+  min-width: 980px;
+}
+
+.ops-risk-table {
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.ops-risk-table th:nth-child(1) {
+  width: 82px;
+}
+
+.ops-risk-table th:nth-child(2) {
+  width: 110px;
+}
+
+.ops-risk-table th:nth-child(3) {
+  width: 210px;
+}
+
+.ops-risk-table th:nth-child(4) {
+  width: 230px;
+}
+
+.ops-risk-strip,
+.ops-report-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.ops-risk-strip span,
+.ops-report-summary span {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ops-risk-strip b,
+.ops-report-summary b {
+  display: block;
+  margin-bottom: 3px;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.ops-inline-check {
+  margin-bottom: 5px;
+}
+
+.ops-inline-check b {
+  display: inline;
+  margin-right: 6px;
+  color: #334155;
+}
+
+.ops-next-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.ops-next-actions article {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 11px 12px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.ops-next-actions strong {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #155eef;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
 .settings-table {
   border: 1px solid #d8dee6;
   background: #ffffff;
@@ -2863,6 +3064,10 @@ select {
   .monitor-chart-grid {
     grid-template-columns: 1fr;
   }
+
+  .ops-overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2889,6 +3094,10 @@ select {
   }
 
   .monitor-topline,
+  .ops-topline,
+  .ops-overview-grid,
+  .ops-risk-strip,
+  .ops-report-summary,
   .alert-management-topline,
   .alert-rule-editor,
   .asset-page-with-tree,
@@ -3030,6 +3239,11 @@ select {
 .admin-console.theme-dark .alert-rule-form,
 .admin-console.theme-dark .alert-rule-item,
 .admin-console.theme-dark .alert-rule-summary span,
+.admin-console.theme-dark .ops-check-row,
+.admin-console.theme-dark .ops-snapshot-card,
+.admin-console.theme-dark .ops-risk-strip span,
+.admin-console.theme-dark .ops-report-summary span,
+.admin-console.theme-dark .ops-next-actions article,
 .admin-console.theme-dark .settings-table {
   border-color: var(--dark-border);
   background: var(--dark-panel);
@@ -3072,6 +3286,11 @@ select {
 .admin-console.theme-dark .alert-rule-summary b,
 .admin-console.theme-dark .alert-rule-item-head strong,
 .admin-console.theme-dark .alert-rule-item-meta span,
+.admin-console.theme-dark .ops-check-row strong,
+.admin-console.theme-dark .ops-snapshot-card strong,
+.admin-console.theme-dark .ops-risk-strip b,
+.admin-console.theme-dark .ops-report-summary b,
+.admin-console.theme-dark .ops-inline-check b,
 .admin-console.theme-dark .tree-node.provider,
 .admin-console.theme-dark .tree-node.product,
 .admin-console.theme-dark .detail-table td {
@@ -3111,6 +3330,14 @@ select {
 .admin-console.theme-dark .alert-rule-summary span,
 .admin-console.theme-dark .alert-rule-item-head span:not(.status-text),
 .admin-console.theme-dark .alert-rule-item-meta b,
+.admin-console.theme-dark .ops-check-row span:not(.status-text),
+.admin-console.theme-dark .ops-check-row em,
+.admin-console.theme-dark .ops-snapshot-card span,
+.admin-console.theme-dark .ops-snapshot-card em,
+.admin-console.theme-dark .ops-risk-strip span,
+.admin-console.theme-dark .ops-report-summary span,
+.admin-console.theme-dark .ops-inline-check,
+.admin-console.theme-dark .ops-next-actions span,
 .admin-console.theme-dark .account-title-actions small {
   color: var(--dark-muted);
 }
@@ -3291,7 +3518,14 @@ select {
 .admin-console.theme-dark .agent-summary-metrics span,
 .admin-console.theme-dark .agent-source-card,
 .admin-console.theme-dark .agent-panel-title,
-.admin-console.theme-dark .alert-rule-item-meta {
+.admin-console.theme-dark .alert-rule-item-meta,
+.admin-console.theme-dark .ops-check-row,
+.admin-console.theme-dark .ops-snapshot-card,
+.admin-console.theme-dark .ops-risk-strip,
+.admin-console.theme-dark .ops-report-summary,
+.admin-console.theme-dark .ops-risk-strip span,
+.admin-console.theme-dark .ops-report-summary span,
+.admin-console.theme-dark .ops-next-actions article {
   border-color: var(--dark-border-soft);
 }
 

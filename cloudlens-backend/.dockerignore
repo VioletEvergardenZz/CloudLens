@@ -1,0 +1,21 @@
+# 本文件用于收敛后端镜像构建上下文，避免把本地数据、日志和密钥发给 Docker daemon。
+.env
+.env.*
+!.env.example
+
+config.runtime.yaml
+data/
+logs/
+bin/
+cloudlens-server
+
+.git/
+.idea/
+.vscode/
+.DS_Store
+
+*.log
+*.tmp
+*.test
+*.out
+coverage.*
