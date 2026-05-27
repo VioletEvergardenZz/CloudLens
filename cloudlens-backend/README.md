@@ -84,6 +84,28 @@ go build -o bin/cloudlens-server ./cmd
 
 当前不建议单独起数据库容器。先用 SQLite，等以后真有多实例或协同写入需求，再迁 PostgreSQL。
 
+## 代码结构
+
+后端现在按“入口、路由、应用服务、适配器、存储、运行态服务”阅读：
+
+```text
+cmd/main.go
+  ↓
+internal/api/server.go      # API 服务生命周期
+internal/api/routes.go      # 路由地图，使用 chi 做轻量分组
+  ↓
+internal/api/*_handlers.go  # HTTP 参数、响应和错误映射
+  ↓
+internal/app/               # 应用服务层
+internal/cloud/             # 云厂商 SDK 适配器
+internal/store/             # SQLite 存储
+internal/service/           # 文件监听、上传、告警等长生命周期服务
+```
+
+新增接口时优先从 `internal/api/routes.go` 找入口；文件入云链路优先从 `internal/service/README.md` 看阅读顺序；云资源主线优先看 `internal/app/cloud`、`internal/cloud/{aliyun,huawei}` 和 `internal/store`。
+
+本次只引入了轻量路由库 `github.com/go-chi/chi/v5`，用于让路由按领域分组。handler 仍保持标准库 `net/http` 风格，不引入大型 Web 框架，也不改变接口响应合同。
+
 ## 常用接口
 
 - `GET /api/health`

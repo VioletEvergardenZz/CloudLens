@@ -8,6 +8,7 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.63.107
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/huaweicloud/huaweicloud-sdk-go-v3 v0.1.195
 	github.com/shirou/gopsutil/v3 v3.24.5
 	golang.org/x/sys v0.37.0
