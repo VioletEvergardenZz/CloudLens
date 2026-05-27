@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/alert"
+	appcloud "github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/app/cloud"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/kb"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/metrics"
@@ -29,6 +30,7 @@ import (
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/pathutil"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/service"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/state"
+	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/store"
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/sysinfo"
 )
 
@@ -39,6 +41,7 @@ type Server struct {
 	kbService  *kb.Service
 	controlDB  *controlSQLiteStore
 	cloudDB    *cloudAccountStore
+	resourceDB *store.ResourceIndexStore
 }
 
 // 请求处理器
@@ -58,6 +61,9 @@ type handler struct {
 	controlNextTaskSeq  uint64
 	controlStore        *controlSQLiteStore
 	cloudStore          *cloudAccountStore
+	resourceIndexStore  *store.ResourceIndexStore
+	resourceService     *appcloud.ResourceService
+	nodeLinkService     *appcloud.NodeLinkService
 	domainProber        registryDomainProbeRunner
 
 	dashboardCacheMu     sync.Mutex
@@ -91,6 +97,13 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	if err != nil {
 		logger.Warn("云账号存储初始化失败，云账号配置接口不可用: %v", err)
 	}
+	var resourceIndexStore *store.ResourceIndexStore
+	if cloudStore != nil {
+		resourceIndexStore, err = store.NewResourceIndexStore(cloudStore.DBPath())
+		if err != nil {
+			logger.Warn("资源索引存储初始化失败，统一资源接口将降级: %v", err)
+		}
+	}
 	h := &handler{
 		cfg:                cfg,
 		fs:                 fs,
@@ -101,6 +114,9 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		controlTasks:       make(map[string]controlTaskState),
 		controlStore:       controlStore,
 		cloudStore:         cloudStore,
+		resourceIndexStore: resourceIndexStore,
+		resourceService:    appcloud.NewResourceService(resourceIndexStore),
+		nodeLinkService:    appcloud.NewNodeLinkService(),
 		domainProber:       newRegistryDomainProber(registryDomainProbeOptions{}),
 		dashboardCacheTTL:  defaultDashboardTTL,
 	}
@@ -115,6 +131,9 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	}
 	if h.cloudStore != nil {
 		logger.Info("云账号存储已加载: %s", h.cloudStore.DBPath())
+	}
+	if h.resourceIndexStore != nil {
+		logger.Info("云资源索引已加载")
 	}
 	mux := http.NewServeMux() //创建一个路由器（根据 URL 路径分发请求）
 	mux.HandleFunc("/api/dashboard", h.dashboard)
@@ -148,8 +167,12 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/cloud/accounts", h.cloudAccountsHandler)
 	mux.HandleFunc("/api/cloud/accounts/", h.cloudAccountByIDHandler)
 	mux.HandleFunc("/api/cloud/snapshots", h.cloudSnapshots)
+	mux.HandleFunc("/api/cloud/resources", h.cloudResources)
+	mux.HandleFunc("/api/resources", h.cloudResources)
+	mux.HandleFunc("/api/resources/", h.cloudResourceByID)
 	mux.HandleFunc("/api/cloud/diagnostics", h.cloudDiagnostics)
 	mux.HandleFunc("/api/cloud/risks", h.cloudRisks)
+	mux.HandleFunc("/api/inspection/risks", h.inspectionRisks)
 	mux.HandleFunc("/api/cloud/inspection-report", h.cloudInspectionReport)
 	mux.HandleFunc("/api/cloud/aliyun/instances", h.cloudAliyunInstances)
 	mux.HandleFunc("/api/cloud/aliyun/rds/instances", h.cloudAliyunRDSInstances)
@@ -161,6 +184,8 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 	mux.HandleFunc("/api/cloud/huawei/rds/overview", h.cloudHuaweiRDSOverview)
 	mux.HandleFunc("/api/cloud/huawei/metrics", h.cloudHuaweiMetrics)
 	mux.HandleFunc("/api/cloud/huawei/overview", h.cloudHuaweiOverview)
+	mux.HandleFunc("/api/k8s/overview", h.k8sOverview)
+	mux.HandleFunc("/api/k8s/node-links", h.k8sNodeLinks)
 	mux.HandleFunc("/api/runtime/checks", h.runtimeChecks)
 	mux.HandleFunc("/api/health", h.health)
 	mux.HandleFunc("/metrics", h.prometheusMetrics)
@@ -171,7 +196,7 @@ func NewServer(cfg *models.Config, fs *service.FileService) *Server {
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: resolveWriteTimeout(cfg),
 	}
-	return &Server{httpServer: srv, kbService: kbService, controlDB: h.controlStore, cloudDB: h.cloudStore}
+	return &Server{httpServer: srv, kbService: kbService, controlDB: h.controlStore, cloudDB: h.cloudStore, resourceDB: h.resourceIndexStore}
 }
 
 // prometheusMetrics 导出 Prometheus 采集格式的运行指标
@@ -253,6 +278,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cloudDB != nil {
 		if closeErr := s.cloudDB.Close(); closeErr != nil {
 			logger.Warn("关闭云账号存储失败: %v", closeErr)
+		}
+	}
+	if s.resourceDB != nil {
+		if closeErr := s.resourceDB.Close(); closeErr != nil {
+			logger.Warn("关闭云资源索引失败: %v", closeErr)
 		}
 	}
 	return err

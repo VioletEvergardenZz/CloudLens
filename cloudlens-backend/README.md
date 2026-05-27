@@ -98,10 +98,18 @@ go build -o bin/cloudlens-server ./cmd
 - `GET /api/cloud/huawei/rds/overview`：从 CES `SYS.RDS` 查询 CPU、内存、QPS、连接数和 IOPS；单个指标失败不会影响其它指标返回
 - `GET /api/cloud/huawei/metrics`：返回单个 CES 指标序列，可通过 `namespace` 和 `metric` 指定指标
 - `GET /api/cloud/snapshots`：返回账号维度的 ECS/RDS 最近快照摘要
+- `GET /api/resources`：基于最近快照返回统一资源索引，支持 `provider`、`type`、`accountId`、`region` 过滤
+- `GET /api/resources/{id}`：返回统一资源详情
+- `GET /api/resources/{id}/metrics`：按统一资源 ID 查询 ECS/RDS 指标，内部路由到阿里云或华为云只读指标接口
+- `GET /api/inspection/risks`：基于统一资源索引计算到期、公网暴露和资源状态风险
+- `GET /api/k8s/overview`：基于 `client-go` 读取 Kubernetes Node、Namespace、Pod、Deployment 和 Warning Event，只做只读巡检
+- `GET /api/k8s/node-links`：按 Node 标签、`providerID`、`InternalIP`、主机名匹配云主机资源
 - `GET /api/cloud/diagnostics`：返回云账号启用状态、最近测试结果、期望权限和快照覆盖
 - `GET /api/cloud/risks`：基于快照识别到期、公网暴露、RDS 存储水位、资源状态异常和快照陈旧
 - `GET /api/cloud/inspection-report`：返回轻量巡检报告，支持 `?format=markdown`
 - `GET /api/runtime/checks`：返回本地数据目录、密钥权限、CORS、Dashboard 降级和告警闭环检查
+
+Kubernetes 巡检默认读取 `CLOUDLENS_K8S_KUBECONFIG`、`KUBECONFIG` 或 `~/.kube/config`。本地 kind 验证时，先确认当前终端执行 `kubectl get nodes` 正常，再访问 `/api/k8s/overview`。
 
 ## 验证
 

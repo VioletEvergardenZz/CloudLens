@@ -1529,6 +1529,51 @@ select {
   font-size: 12px;
 }
 
+.k8s-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.k8s-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.k8s-page-actions span {
+  margin-top: 0;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.k8s-refresh-button {
+  flex: 0 0 auto;
+  height: 30px;
+  min-width: 68px;
+  border: 1px solid #cfd6e0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.k8s-refresh-button:hover {
+  border-color: #155eef;
+  color: #155eef;
+}
+
+.k8s-refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .detail-table th {
   width: 120px;
 }
@@ -3144,6 +3189,16 @@ select {
     flex-direction: column;
   }
 
+  .k8s-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .k8s-page-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .monitor-resource-summary span {
     border-bottom: 1px solid #eef0f3;
   }
@@ -3545,6 +3600,7 @@ select {
 .admin-console.theme-dark .account-form button,
 .admin-console.theme-dark .account-title-actions button,
 .admin-console.theme-dark .monitor-refresh-panel button,
+.admin-console.theme-dark .k8s-refresh-button,
 .admin-console.theme-dark .agent-command-actions button,
 .admin-console.theme-dark .admin-header button,
 .admin-console.theme-dark .admin-logo button,
@@ -3567,6 +3623,7 @@ select {
 .admin-console.theme-dark .account-form button:hover,
 .admin-console.theme-dark .account-title-actions button:hover,
 .admin-console.theme-dark .monitor-refresh-panel button:hover,
+.admin-console.theme-dark .k8s-refresh-button:hover,
 .admin-console.theme-dark .agent-command-actions button:hover,
 .admin-console.theme-dark .admin-header button:hover,
 .admin-console.theme-dark .admin-logo button:hover,

@@ -32,6 +32,10 @@
 - 阿里云 ECS 指标查询已经统一采样周期兜底，并兼容云监控返回的 `timestamp`、`Timestamp`、`Date` 等采样时间字段，避免无效时间点影响监控新鲜度判断。
 - 控制台已经增加资源健康评分、高风险资源列表、公网入口提醒和长期按量资源提示，便于从“资源可见”推进到“风险可见”。
 - Kubernetes 清单已经覆盖 Deployment、Service、ConfigMap、Secret、PVC、探针、资源限制、ServiceAccount 和 NetworkPolicy，可用于集群部署和简历项目展示。
+- 新增 Kubernetes 只读巡检纵切：后端基于 `client-go` 提供 `/api/k8s/overview`，前端拆出“K8s 巡检”页面，可在本地 kind 环境查看 Node、Pod、Deployment 和 Warning Event。
+- 新增统一资源索引接口 `/api/resources` 与 `/api/cloud/resources`，并落地 `cloud_resources` 规范化索引表，为筛选、风险和 K8s Node 关联打基础。
+- 新增 `/api/resources/{id}/metrics` 与 `/api/inspection/risks`，统一资源详情、指标和巡检风险入口。
+- 新增 `/api/k8s/node-links`，基于 Node 标签、`providerID`、`InternalIP` 和主机名匹配 ECS 资源，用于 kind 本地验证关联模型。
 - 资源详情已经提供监控、告警、AI 摘要和知识库入口，作为实例异常排查联动的最小起点。
 - Provider 抽象先沉淀到 `docs/02-架构设计/provider-抽象草案.md`，后续只从 ECS 只读共同字段开始落地。
 
@@ -45,6 +49,7 @@
 - 建设到期与成本风险提示，下一步重点识别长期低负载高规格实例和疑似闲置实例。
 - 强化告警事件闭环，支持分级、确认、处理中、已恢复、处理记录和恢复时间。
 - 抽象统一 provider 接口时只从现有阿里云/华为云只读查询共同字段开始，不提前纳入写操作和复杂调度。
+- 基于 kind 继续验证 K8s Node 与云主机的关联规则，优先使用 `providerID`、`InternalIP` 和 `cloudlens.io/instance-id` 标签做匹配，不把 CloudLens 扩张成完整 K8s 管理平台。
 - 强化云资源与告警、知识库的联动时，优先做“从资源详情进入实例异常排查”的只读入口。
 - 如果继续复用旧能力，就把文件入云、AI、知识库统一挂到实例异常排查链路，不恢复为独立产品主线。
 - 后续再补巡检报告导出、通知集成和轻量安全基线检查，用于沉淀日报、周报、故障复盘和关键风险推送。

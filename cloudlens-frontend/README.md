@@ -9,6 +9,7 @@
 - ECS 到期剩余天数汇总
 - ECS 主机监控与 RDS 性能概览
 - 运维体检、账号诊断、风险中心和轻量巡检报告
+- Kubernetes 只读巡检与 K8s Node 到云主机的关联展示
 - 告警、知识库、文件工作台
 
 默认入口已经切到 `CloudResourceConsole`，产品叙事也以多云资源监控为主。
@@ -37,6 +38,7 @@ npm run build
 
 - `src/App.tsx`
 - `src/CloudResourceConsole.tsx`
+- `src/cloud/pages/K8sInspectionPage.tsx`
 - `src/AlertConsole.tsx`
 - `src/KnowledgeConsole.tsx`
 - `src/console/dashboardApi.ts`
@@ -48,5 +50,6 @@ npm run build
 - 监控概览使用“左侧资源选择器 + 右侧图表”的工作区布局，探针管理使用“全局覆盖概览 + 状态泳道 + 账号/地域/来源治理”的工作台布局，可用采样覆盖率只统计最新可用且有真实采样的资源
 - RDS 指标页会按后端返回的性能参数动态展开，展示当前值、趋势、最近采样、窗口统计和原始 Key 信息
 - “运维体检”页会汇总后端 `/api/cloud/diagnostics`、`/api/cloud/risks`、`/api/runtime/checks` 和 `/api/cloud/inspection-report`，用于看账号接入、资源快照、风险项和运行环境
+- “K8s 巡检”页已经拆到 `src/cloud/pages/K8sInspectionPage.tsx`，读取 `/api/k8s/overview` 和 `/api/k8s/node-links`
 - 文件、AI、知识库页面后续更适合围绕实例异常排查来融合
 - 系统资源控制台属于旧支线，不再作为现行主功能推进

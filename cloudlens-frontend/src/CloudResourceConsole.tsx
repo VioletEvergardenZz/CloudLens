@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, USE_MOCK, buildApiHeaders } from "./console/dashboardApi";
+import { K8sInspectionPage, type K8sNodeLink } from "./cloud/pages/K8sInspectionPage";
 import "./CloudResourceConsole.css";
 
 type PageKey =
@@ -15,6 +16,7 @@ type PageKey =
   | "accounts"
   | "regions"
   | "monitor"
+  | "k8s"
   | "agents"
   | "alerts"
   | "ai"
@@ -408,6 +410,111 @@ type CloudInspectionReportResponse = {
   error?: string;
 };
 
+type K8sSummary = {
+  nodeTotal: number;
+  nodeReady: number;
+  namespaceTotal: number;
+  podTotal: number;
+  podRunning: number;
+  podPending: number;
+  podFailed: number;
+  deploymentTotal: number;
+  deploymentUnavailable: number;
+  warningEventTotal: number;
+  issueTotal: number;
+};
+
+type K8sClusterSummary = {
+  context?: string;
+  server?: string;
+  version?: string;
+};
+
+type K8sNode = {
+  name: string;
+  ready: boolean;
+  status: string;
+  providerId?: string;
+  internalIp?: string;
+  externalIp?: string;
+  hostName?: string;
+  kubeletVersion?: string;
+  osImage?: string;
+  containerRuntime?: string;
+  cpu?: string;
+  memory?: string;
+  podCidr?: string;
+  labels?: Record<string, string>;
+  taints?: string[];
+  createdAt?: string;
+};
+
+type K8sPod = {
+  namespace: string;
+  name: string;
+  nodeName?: string;
+  phase: string;
+  ready: boolean;
+  reason?: string;
+  message?: string;
+  restartCount: number;
+  images?: string[];
+  createdAt?: string;
+};
+
+type K8sDeployment = {
+  namespace: string;
+  name: string;
+  replicas: number;
+  readyReplicas: number;
+  availableReplicas: number;
+  unavailableReplicas: number;
+  status: string;
+  reason?: string;
+  message?: string;
+  createdAt?: string;
+};
+
+type K8sEvent = {
+  namespace: string;
+  name: string;
+  type: string;
+  reason: string;
+  message: string;
+  involvedKind: string;
+  involvedName: string;
+  count: number;
+  lastObservedAt?: string;
+};
+
+type K8sIssue = {
+  id: string;
+  severity: string;
+  category: string;
+  resourceType: string;
+  namespace?: string;
+  resourceName: string;
+  message: string;
+  suggestion: string;
+  evidence?: string;
+};
+
+type K8sOverviewResponse = {
+  ok?: boolean;
+  enabled?: boolean;
+  source?: string;
+  collectedAt?: string;
+  cluster?: K8sClusterSummary;
+  summary?: K8sSummary;
+  nodes?: K8sNode[];
+  pods?: K8sPod[];
+  deployments?: K8sDeployment[];
+  events?: K8sEvent[];
+  issues?: K8sIssue[];
+  error?: string;
+  suggestion?: string;
+};
+
 type MonitorMetricKey = string;
 
 type MonitorMetric = {
@@ -749,6 +856,12 @@ const menuGroups: Array<{
     items: [
       { key: "monitor", label: "监控概览", desc: "ECS/RDS 指标", children: [
         { key: "workspace", label: "监控工作台", desc: "选资源看指标" },
+      ] },
+      { key: "k8s", label: "K8s 巡检", desc: "Node、Pod 与事件", children: [
+        { key: "overview", label: "集群总览", desc: "节点和负载状态" },
+        { key: "issues", label: "异常列表", desc: "优先处理项" },
+        { key: "pods", label: "Pod 清单", desc: "运行态明细" },
+        { key: "links", label: "节点关联", desc: "云主机匹配" },
       ] },
       { key: "agents", label: "探针管理", desc: "采样覆盖与质量", children: [
         { key: "overview", label: "治理总览", desc: "覆盖率和缺口" },
@@ -2380,6 +2493,32 @@ const emptyCloudRiskSummary = (): CloudRiskSummary => ({
   byCategory: {},
 });
 
+const emptyK8sSummary = (): K8sSummary => ({
+  nodeTotal: 0,
+  nodeReady: 0,
+  namespaceTotal: 0,
+  podTotal: 0,
+  podRunning: 0,
+  podPending: 0,
+  podFailed: 0,
+  deploymentTotal: 0,
+  deploymentUnavailable: 0,
+  warningEventTotal: 0,
+  issueTotal: 0,
+});
+
+const emptyK8sOverview = (): K8sOverviewResponse => ({
+  ok: false,
+  source: "unavailable",
+  cluster: {},
+  summary: emptyK8sSummary(),
+  nodes: [],
+  pods: [],
+  deployments: [],
+  events: [],
+  issues: [],
+});
+
 const providerLabel = (provider?: string) => {
   if (provider === "aliyun" || provider === "huawei" || provider === "tencent") return providerLabels[provider];
   return provider || "--";
@@ -2882,13 +3021,14 @@ const buildCloudAlertReminders = (servers: CloudServer[], configs: Record<string
 };
 
 const getStatusClass = (status: string) => {
-  if (status === "running" || status === "online" || status === "normal" || status === "info" || status === "ok" || status === "fresh" || status === "aging" || status === "完成") {
+  const normalized = status.toLowerCase();
+  if (normalized === "running" || normalized === "online" || normalized === "normal" || normalized === "info" || normalized === "ok" || normalized === "fresh" || normalized === "aging" || normalized === "ready" || normalized === "available" || status === "完成") {
     return "ok";
   }
-  if (status === "warning" || status === "stale" || status === "degraded" || status === "syncing" || status === "expiring" || status === "执行中" || status === "等待") {
+  if (normalized === "warning" || normalized === "stale" || normalized === "degraded" || normalized === "syncing" || normalized === "expiring" || normalized === "pending" || normalized === "unavailable" || status === "执行中" || status === "等待") {
     return "warn";
   }
-  if (status === "maintenance" || status === "disabled" || status === "no_expiration" || status === "unknown") {
+  if (normalized === "maintenance" || normalized === "disabled" || normalized === "no_expiration" || normalized === "unknown") {
     return "muted";
   }
   return "bad";
@@ -2899,6 +3039,7 @@ const defaultPageSections: Partial<Record<PageKey, string>> = {
   servers: "overview",
   accounts: "list",
   monitor: "workspace",
+  k8s: "overview",
   agents: "overview",
   alerts: "reminders",
   ai: "analysis",
@@ -3035,6 +3176,10 @@ export function CloudResourceConsole() {
   const [opsRuntimeChecks, setOpsRuntimeChecks] = useState<CloudOpsCheck[]>([]);
   const [opsReport, setOpsReport] = useState<CloudInspectionReport | null>(null);
   const [opsCheckedAt, setOpsCheckedAt] = useState("--");
+  const [k8sLoading, setK8sLoading] = useState(false);
+  const [k8sError, setK8sError] = useState("");
+  const [k8sOverview, setK8sOverview] = useState<K8sOverviewResponse>(() => emptyK8sOverview());
+  const [k8sNodeLinks, setK8sNodeLinks] = useState<K8sNodeLink[]>([]);
   const assetLoadingRef = useRef(false);
 
   const getActiveSection = useCallback((page: PageKey) => {
@@ -3481,6 +3626,53 @@ export function CloudResourceConsole() {
     });
   };
 
+  const loadK8sOverview = useCallback(async () => {
+    setK8sLoading(true);
+    setK8sError("");
+    try {
+      const resp = await fetchWithTimeout(`${API_BASE}/api/k8s/overview`, {
+        cache: "no-store",
+        headers: buildApiHeaders(),
+      }, 15_000);
+      const payload = (await resp.json().catch(() => ({}))) as K8sOverviewResponse;
+      if (!resp.ok) {
+        throw new Error(payload.error || `K8s 巡检接口返回 ${resp.status}`);
+      }
+      const nextOverview = {
+        ...emptyK8sOverview(),
+        ...payload,
+        summary: payload.summary ?? emptyK8sSummary(),
+        cluster: payload.cluster ?? {},
+        nodes: payload.nodes ?? [],
+        pods: payload.pods ?? [],
+        deployments: payload.deployments ?? [],
+        events: payload.events ?? [],
+        issues: payload.issues ?? [],
+      };
+      setK8sOverview(nextOverview);
+      if (!payload.ok) {
+        setK8sError(payload.error || payload.suggestion || "K8s 巡检暂不可用");
+      }
+      const linksResp = await fetchWithTimeout(`${API_BASE}/api/k8s/node-links`, {
+        cache: "no-store",
+        headers: buildApiHeaders(),
+      }, 15_000);
+      const linksPayload = (await linksResp.json().catch(() => ({}))) as { ok?: boolean; items?: K8sNodeLink[]; error?: string };
+      if (linksResp.ok && linksPayload.ok) {
+        setK8sNodeLinks(linksPayload.items ?? []);
+      } else {
+        setK8sNodeLinks([]);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "K8s 巡检加载失败";
+      setK8sOverview(emptyK8sOverview());
+      setK8sNodeLinks([]);
+      setK8sError(message);
+    } finally {
+      setK8sLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadCloudAssets();
     if (USE_MOCK || typeof window === "undefined") return;
@@ -3489,6 +3681,12 @@ export function CloudResourceConsole() {
     }, ASSET_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [loadCloudAssets]);
+
+  useEffect(() => {
+    if (activePage === "k8s") {
+      void loadK8sOverview();
+    }
+  }, [activePage, loadK8sOverview]);
 
   const parsedScope = useMemo(() => parseScope(scope), [scope]);
 
@@ -5535,6 +5733,183 @@ export function CloudResourceConsole() {
     );
   };
 
+  const renderK8sPage = () => {
+    return (
+      <K8sInspectionPage
+        activeSection={getActiveSection("k8s")}
+        overview={k8sOverview}
+        nodeLinks={k8sNodeLinks}
+        loading={k8sLoading}
+        error={k8sError}
+        onRefresh={() => void loadK8sOverview()}
+        formatDisplayTime={formatDisplayTime}
+        cloudRiskSeverityLabel={cloudRiskSeverityLabel}
+        StatusText={StatusText}
+      />
+    );
+    const activeSection = getActiveSection("k8s");
+    const summary = k8sOverview.summary ?? emptyK8sSummary();
+    const nodes = k8sOverview.nodes ?? [];
+    const pods = k8sOverview.pods ?? [];
+    const deployments = k8sOverview.deployments ?? [];
+    const issues = k8sOverview.issues ?? [];
+    return (
+      <section className="page-main-section k8s-page">
+        <div className="section-title k8s-page-header">
+          <div>
+            <h3>K8s 巡检</h3>
+            <span>{k8sOverview.cluster?.context || k8sOverview.cluster?.server || "等待连接集群"} / {k8sOverview.cluster?.version || "版本未知"}</span>
+          </div>
+          <div className="k8s-page-actions">
+            <span>{k8sOverview.collectedAt ? `采集于 ${formatDisplayTime(k8sOverview.collectedAt)}` : "尚未采集"}</span>
+            <button className="k8s-refresh-button" type="button" onClick={() => void loadK8sOverview()} disabled={k8sLoading}>
+              {k8sLoading ? "刷新中" : "刷新"}
+            </button>
+          </div>
+        </div>
+        {k8sError ? <div className="inline-message">{k8sError}</div> : null}
+        {activeSection === "overview" ? (
+          <>
+            <div className="agent-overview-grid">
+              <article className="agent-overview-card primary">
+                <span>节点就绪</span>
+                <strong>{summary.nodeReady}/{summary.nodeTotal}</strong>
+                <em>{k8sOverview.source || "kubernetes"}</em>
+              </article>
+              <article className="agent-overview-card">
+                <span>Pod 状态</span>
+                <strong>{summary.podRunning}/{summary.podTotal}</strong>
+                <em>Pending {summary.podPending} / Failed {summary.podFailed}</em>
+              </article>
+              <article className="agent-overview-card">
+                <span>工作负载</span>
+                <strong>{summary.deploymentTotal}</strong>
+                <em>不可用 {summary.deploymentUnavailable}</em>
+              </article>
+              <article className="agent-overview-card">
+                <span>异常信号</span>
+                <strong>{summary.issueTotal}</strong>
+                <em>Warning Event {summary.warningEventTotal}</em>
+              </article>
+            </div>
+            <div className="table-panel">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>节点</th>
+                    <th>状态</th>
+                    <th>内网 IP</th>
+                    <th>ProviderID</th>
+                    <th>规格</th>
+                    <th>Kubelet</th>
+                    <th>运行时</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nodes.map((node) => (
+                    <tr key={node.name}>
+                      <td><strong>{node.name}</strong></td>
+                      <td><StatusText status={node.status}>{node.status}</StatusText></td>
+                      <td>{node.internalIp || "--"}</td>
+                      <td>{node.providerId || "--"}</td>
+                      <td>{node.cpu || "--"} / {node.memory || "--"}</td>
+                      <td>{node.kubeletVersion || "--"}</td>
+                      <td>{node.containerRuntime || "--"}</td>
+                    </tr>
+                  ))}
+                  {!nodes.length ? <tr><td colSpan={7}>暂无节点数据</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="table-panel">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>命名空间</th>
+                    <th>Deployment</th>
+                    <th>状态</th>
+                    <th>副本</th>
+                    <th>原因</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deployments.slice(0, 20).map((deployment) => (
+                    <tr key={`${deployment.namespace}:${deployment.name}`}>
+                      <td>{deployment.namespace}</td>
+                      <td><strong>{deployment.name}</strong></td>
+                      <td><StatusText status={deployment.status}>{deployment.status}</StatusText></td>
+                      <td>{deployment.availableReplicas}/{deployment.replicas}</td>
+                      <td>{deployment.reason || deployment.message || "--"}</td>
+                    </tr>
+                  ))}
+                  {!deployments.length ? <tr><td colSpan={5}>暂无工作负载数据</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
+        {activeSection === "issues" ? (
+          <div className="table-panel">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>级别</th>
+                  <th>类型</th>
+                  <th>资源</th>
+                  <th>问题</th>
+                  <th>建议</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issues.map((issue) => (
+                  <tr key={issue.id}>
+                    <td><StatusText status={issue.severity}>{cloudRiskSeverityLabel(issue.severity)}</StatusText></td>
+                    <td>{issue.category}</td>
+                    <td>{issue.namespace ? `${issue.namespace} / ` : ""}{issue.resourceType} / {issue.resourceName}</td>
+                    <td>{issue.message}</td>
+                    <td>{issue.suggestion}</td>
+                  </tr>
+                ))}
+                {!issues.length ? <tr><td colSpan={5}>暂无 K8s 异常项</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        {activeSection === "pods" ? (
+          <div className="table-panel">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>命名空间</th>
+                  <th>Pod</th>
+                  <th>状态</th>
+                  <th>节点</th>
+                  <th>重启</th>
+                  <th>原因</th>
+                  <th>创建时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pods.slice(0, 80).map((pod) => (
+                  <tr key={`${pod.namespace}:${pod.name}`}>
+                    <td>{pod.namespace}</td>
+                    <td><strong>{pod.name}</strong></td>
+                    <td><StatusText status={pod.phase}>{pod.ready ? `${pod.phase} / Ready` : pod.phase}</StatusText></td>
+                    <td>{pod.nodeName || "--"}</td>
+                    <td>{pod.restartCount}</td>
+                    <td>{pod.reason || pod.message || "--"}</td>
+                    <td>{formatDisplayTime(pod.createdAt)}</td>
+                  </tr>
+                ))}
+                {!pods.length ? <tr><td colSpan={7}>暂无 Pod 数据</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+    );
+  };
+
   const renderSettingsPage = () => (
     <section className="page-main-section">
       <table className="detail-table settings-table">
@@ -5554,6 +5929,7 @@ export function CloudResourceConsole() {
     if (activePage === "accounts") return renderAccountsPage();
     if (activePage === "regions") return renderRegionsPage();
     if (activePage === "monitor") return renderMonitorPage();
+    if (activePage === "k8s") return renderK8sPage();
     if (activePage === "agents") return renderAgentsPage();
     if (activePage === "alerts") return renderEventsPage();
     if (activePage === "ai") return renderAiPage();
@@ -5643,7 +6019,7 @@ export function CloudResourceConsole() {
             <button type="button" onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}>
               {theme === "light" ? "深色模式" : "浅色模式"}
             </button>
-            <button type="button" onClick={() => void loadCloudAssets()}>刷新</button>
+            <button type="button" onClick={() => activePage === "k8s" ? void loadK8sOverview() : void loadCloudAssets()}>刷新</button>
           </div>
         </header>
         <div className="admin-content">{renderPage()}</div>

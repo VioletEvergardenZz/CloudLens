@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/VioletEvergardenZz/CloudLens/cloudlens-backend/internal/logger"
 )
@@ -25,6 +26,22 @@ func (h *handler) saveCloudResourceSnapshot(account *cloudAccountRecord, resourc
 	}
 	if err := h.cloudStore.SaveResourceSnapshot(account.ID, account.Provider, resourceType, items, "live"); err != nil {
 		logger.Warn("保存云资源快照失败 account=%d resource=%s: %v", account.ID, resourceType, err)
+	}
+	if h.resourceService != nil {
+		payload, err := json.Marshal(items)
+		if err == nil {
+			resources := normalizeCloudSnapshotResources(cloudResourceSnapshot{
+				AccountID:     account.ID,
+				Provider:      account.Provider,
+				ResourceType:  resourceType,
+				PayloadJSON:   payload,
+				Source:        "live",
+				LastSuccessAt: formatCloudTime(time.Now().UTC()),
+			}, *account)
+			if err := h.resourceService.Upsert(resources); err != nil {
+				logger.Warn("更新云资源索引失败 account=%d resource=%s: %v", account.ID, resourceType, err)
+			}
+		}
 	}
 }
 

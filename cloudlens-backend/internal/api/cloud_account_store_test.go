@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,9 @@ func TestCloudAccountStoreUpdateCanClearHuaweiProjectID(t *testing.T) {
 }
 
 func TestLoadOrCreateCloudSecretKeyTightensExistingFilePerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows 不完整支持 POSIX 权限位，密钥权限收紧在运行检查中按平台提示")
+	}
 	keyPath := filepath.Join(t.TempDir(), "secret.key")
 	key := make([]byte, 32)
 	for i := range key {
